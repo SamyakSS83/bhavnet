@@ -1,0 +1,7 @@
+models/trained
+models/bert
+datasets/
+__pycache__
+*.pyc
+*.pyo
+*.pyd

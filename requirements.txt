@@ -1,0 +1,29 @@
+# Core ML frameworks
+torch>=1.9.0
+torch-geometric>=2.0.0
+transformers>=4.20.0
+
+# Data processing
+pandas>=1.3.0
+numpy>=1.21.0
+scikit-learn>=1.0.0
+pyyaml>=6.0
+
+# Visualization
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Utilities
+tqdm>=4.62.0
+requests>=2.26.0
+
+# Language-specific models
+# These will be downloaded automatically by transformers
+# bert-base-uncased (English)
+# bert-base-german-cased (German)
+# dccuchile/bert-base-spanish-wwm-cased (Spanish)
+# camembert-base (French)
+# dbmdz/bert-base-italian-cased (Italian)
+# neuralmind/bert-base-portuguese-cased (Portuguese)
+# GroNLP/bert-base-dutch-cased (Dutch)
+# DeepPavlov/rubert-base-cased (Russian)

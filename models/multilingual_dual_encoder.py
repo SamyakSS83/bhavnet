@@ -1,0 +1,483 @@
+import os
+import torch
+import pandas as pd
+import numpy as np
+from torch.utils.data import Dataset
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.data import Data as GraphData
+from torch_geometric.data import DataLoader as GeoDataLoader
+from torch_geometric.nn import TransformerConv, global_mean_pool
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from tqdm import tqdm
+# Set matplotlib backend before importing pyplot to avoid segfaults
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+import matplotlib.pyplot as plt
+import seaborn as sns
+import argparse
+import yaml
+import logging
+from pathlib import Path
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class WordPairGraphDataset(Dataset):
+    """
+    Graph dataset for word pairs using pre-trained language model embeddings.
+    Each word pair becomes a 2-node graph with bidirectional edges.
+    """
+    def __init__(self, dataframe, bert_model, tokenizer, device):
+        self.data = dataframe
+        self.bert_model = bert_model
+        self.tokenizer = tokenizer
+        self.device = device
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        row = self.data.iloc[idx]
+        word1 = str(row['word1'])
+        word2 = str(row['word2'])
+        label = int(row['label'])
+
+        # Get embeddings from fine-tuned BERT
+        with torch.no_grad():
+            inputs1 = self.tokenizer(word1, return_tensors='pt').to(self.device)
+            inputs2 = self.tokenizer(word2, return_tensors='pt').to(self.device)
+            
+            emb1 = self.bert_model(**inputs1).last_hidden_state[:, 0, :].squeeze(0).cpu()
+            emb2 = self.bert_model(**inputs2).last_hidden_state[:, 0, :].squeeze(0).cpu()
+
+        # Create graph with two nodes
+        x = torch.stack([emb1, emb2])
+        edge_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
+        
+        return GraphData(x=x, edge_index=edge_index, y=torch.tensor(label, dtype=torch.long))
+
+class DualEncoderGraphTransformer(nn.Module):
+    """
+    Dual Encoder Graph Transformer for antonym detection.
+    Uses separate synonym and antonym projection branches.
+    """
+    def __init__(self, in_channels, hidden_channels, out_channels, heads=2, dropout=0.2):
+        super(DualEncoderGraphTransformer, self).__init__()
+        
+        # Synonym projection branch
+        self.syn_proj = nn.Sequential(
+            nn.Linear(in_channels, hidden_channels),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        
+        # Antonym projection branch
+        self.ant_proj = nn.Sequential(
+            nn.Linear(in_channels, hidden_channels),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        
+        # Fusion layer
+        self.fusion = nn.Linear(hidden_channels * 2, hidden_channels * heads)
+        
+        # Graph transformer layers
+        self.conv1 = TransformerConv(
+            hidden_channels * heads, 
+            hidden_channels, 
+            heads=heads, 
+            dropout=dropout
+        )
+        self.conv2 = TransformerConv(
+            hidden_channels * heads, 
+            hidden_channels, 
+            heads=1, 
+            dropout=dropout
+        )
+        
+        # Classification layers
+        self.lin1 = nn.Linear(hidden_channels, hidden_channels)
+        self.lin2 = nn.Linear(hidden_channels, out_channels)
+        
+    def forward(self, data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        
+        # Dual projections
+        x_syn = self.syn_proj(x)
+        x_ant = self.ant_proj(x)
+        
+        # Store for margin loss computation
+        self.x_syn = x_syn
+        self.x_ant = x_ant
+        
+        # Feature fusion
+        x_combined = torch.cat([x_syn, x_ant], dim=1)
+        x_fused = self.fusion(x_combined)
+        
+        # Graph transformer layers
+        x = self.conv1(x_fused, edge_index)
+        x = F.relu(x)
+        x = self.conv2(x, edge_index)
+        
+        # Global pooling and classification
+        x = global_mean_pool(x, batch)
+        x = F.relu(self.lin1(x))
+        
+        return self.lin2(x)
+
+class MultilingualDualEncoderTrainer:
+    """Trainer for the multilingual dual encoder graph transformer."""
+    
+    def __init__(self, config, language, output_dir):
+        self.config = config
+        self.language = language
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Device setup
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        logger.info(f"Using device: {self.device}")
+        
+        # Get configuration
+        self.lang_config = config['languages'][language]
+        self.training_config = config['training']
+        
+        # Load pre-trained BERT model
+        self.model_name = self.lang_config['bert_model']
+        logger.info(f"Loading BERT model: {self.model_name}")
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        
+        # Load fine-tuned BERT if available
+        if 'trained_bert_path' in self.lang_config:
+            trained_bert_path = Path(self.lang_config['trained_bert_path'])
+            if trained_bert_path.exists():
+                logger.info(f"Loading fine-tuned BERT from {trained_bert_path}")
+                ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
+                ft_model.load_state_dict(torch.load(trained_bert_path, map_location=self.device))
+                self.bert_model = ft_model.bert.to(self.device)
+                logger.info("✓ Successfully loaded fine-tuned BERT model")
+            else:
+                logger.warning(f"Fine-tuned BERT path not found: {trained_bert_path}")
+                logger.info("Using pre-trained BERT (not fine-tuned)")
+                ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
+                self.bert_model = ft_model.bert.to(self.device)
+        else:
+            logger.info("Using pre-trained BERT (not fine-tuned)")
+            ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
+            self.bert_model = ft_model.bert.to(self.device)
+        
+        self.bert_model.eval()
+        
+        # Initialize dual encoder model
+        self.model = DualEncoderGraphTransformer(
+            in_channels=768,  # BERT hidden size
+            hidden_channels=self.training_config['hidden_dim'],
+            out_channels=2,
+            heads=2,
+            dropout=self.training_config['dropout']
+        ).to(self.device)
+        
+    def load_data(self, data_dir):
+        """Load training and test data."""
+        data_path = Path(data_dir) / self.language
+        
+        # Load data files
+        train_file = data_path / 'train.txt'
+        val_file = data_path / 'val.txt'
+        test_file = data_path / 'test.txt'
+        
+        train_data = self._load_file(train_file) if train_file.exists() else pd.DataFrame()
+        val_data = self._load_file(val_file) if val_file.exists() else pd.DataFrame()
+        test_data = self._load_file(test_file) if test_file.exists() else pd.DataFrame()
+        
+        # Combine train and val for dual encoder training
+        if not val_data.empty:
+            train_data = pd.concat([train_data, val_data], ignore_index=True)
+        
+        logger.info(f"Loaded data for {self.language}:")
+        logger.info(f"  Combined Train: {len(train_data)} samples")
+        logger.info(f"  Test: {len(test_data)} samples")
+        
+        if len(train_data) == 0:
+            raise ValueError(f"No training data found for {self.language}")
+        
+        return train_data, test_data
+    
+    def _load_file(self, file_path):
+        """Load a single data file."""
+        data = []
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('\t')
+                if len(parts) >= 3:
+                    data.append({
+                        'word1': parts[0],
+                        'word2': parts[1],
+                        'label': int(parts[2])
+                    })
+        return pd.DataFrame(data)
+    
+    def create_dataloaders(self, train_data, test_data):
+        """Create graph dataloaders."""
+        batch_size = self.training_config['batch_size']
+        
+        train_dataset = WordPairGraphDataset(
+            train_data, self.bert_model, self.tokenizer, self.device
+        )
+        test_dataset = WordPairGraphDataset(
+            test_data, self.bert_model, self.tokenizer, self.device
+        )
+        
+        train_loader = GeoDataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_loader = GeoDataLoader(test_dataset, batch_size=batch_size)
+        
+        return train_loader, test_loader
+    
+    def compute_margin_loss(self, model, data):
+        """Compute margin-based loss for dual projections."""
+        margin_syn = self.training_config['margin_syn']
+        margin_ant = self.training_config['margin_ant']
+        losses = []
+        
+        batch = data.batch.cpu().numpy()
+        unique_graphs = np.unique(batch)
+        
+        for g in unique_graphs:
+            idx = (data.batch == g).nonzero(as_tuple=False).view(-1)
+            if idx.shape[0] != 2:
+                continue
+            
+            graph_idx = g.item() if hasattr(g, 'item') else g
+            label = data.y[graph_idx].item()
+            
+            # Compute similarities in both spaces
+            sim_syn = torch.tanh(torch.dot(model.x_syn[idx[0]], model.x_syn[idx[1]]))
+            sim_ant = torch.tanh(torch.dot(model.x_ant[idx[0]], model.x_ant[idx[1]]))
+            
+            if label == 0:  # non-antonym pair
+                loss = torch.relu(margin_syn - sim_syn)
+            else:  # antonym pair
+                loss = torch.relu(sim_ant - margin_ant)
+                
+            losses.append(loss)
+        
+        if losses:
+            return torch.stack(losses).mean()
+        else:
+            return torch.tensor(0.0, device=self.device)
+    
+    def train(self, train_loader, test_loader):
+        """Train the dual encoder model with early stopping."""
+        num_epochs = self.training_config['num_epochs']
+        learning_rate = self.training_config['learning_rate']
+        margin_weight = self.training_config['margin_weight']
+        
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+        criterion = nn.CrossEntropyLoss()
+        
+        best_acc = 0.0
+        best_model_path = self.output_dir / f'best_{self.language}_dual_encoder_model.pt'
+        
+        # Early stopping parameters
+        patience = 5
+        no_improvement_count = 0
+        
+        logger.info(f"Starting dual encoder training for {num_epochs} epochs with early stopping (patience={patience})...")
+        
+        for epoch in range(num_epochs):
+            self.model.train()
+            total_loss = 0.0
+            
+            train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+            for batch in train_pbar:
+                batch = batch.to(self.device)
+                optimizer.zero_grad()
+                
+                out = self.model(batch)
+                
+                # Classification loss
+                ce_loss = criterion(out, batch.y)
+                
+                # Margin loss
+                margin_loss = self.compute_margin_loss(self.model, batch)
+                
+                # Combined loss
+                loss = ce_loss + margin_weight * margin_loss
+                
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+                
+                train_pbar.set_postfix({
+                    'loss': f"{loss.item():.4f}",
+                    'ce_loss': f"{ce_loss.item():.4f}",
+                    'margin_loss': f"{margin_loss.item():.4f}"
+                })
+            
+            avg_loss = total_loss / len(train_loader)
+            
+            # Evaluate on test set
+            test_acc = self._evaluate(test_loader)
+            
+            logger.info(
+                f"Epoch {epoch+1}/{num_epochs}, "
+                f"Loss: {avg_loss:.4f}, "
+                f"Test Accuracy: {test_acc:.4f}"
+            )
+            
+            # Save best model and check for early stopping
+            if test_acc > best_acc:
+                best_acc = test_acc
+                torch.save(self.model.state_dict(), best_model_path)
+                logger.info(f"Saved new best model with test accuracy: {test_acc:.4f}")
+                no_improvement_count = 0
+            else:
+                no_improvement_count += 1
+                logger.info(f"No improvement for {no_improvement_count} epochs")
+                
+                if no_improvement_count >= patience:
+                    logger.info(f"Early stopping triggered after {epoch+1} epochs")
+                    break
+        
+        return best_model_path
+    
+    def _evaluate(self, data_loader):
+        """Evaluate model on a dataset."""
+        self.model.eval()
+        all_preds = []
+        all_labels = []
+        
+        with torch.no_grad():
+            for batch in data_loader:
+                batch = batch.to(self.device)
+                logits = self.model(batch)
+                preds = torch.argmax(logits, dim=1).cpu().numpy()
+                labels = batch.y.cpu().numpy()
+                all_preds.extend(preds)
+                all_labels.extend(labels)
+        
+        return accuracy_score(all_labels, all_preds)
+    
+    def test(self, test_loader, model_path):
+        """Test the model and generate detailed results."""
+        # Load best model
+        self.model.load_state_dict(torch.load(model_path))
+        self.model.eval()
+        
+        all_preds = []
+        all_labels = []
+        
+        logger.info("Evaluating dual encoder on test set...")
+        with torch.no_grad():
+            for batch in tqdm(test_loader):
+                batch = batch.to(self.device)
+                logits = self.model(batch)
+                preds = torch.argmax(logits, dim=1).cpu().numpy()
+                labels = batch.y.cpu().numpy()
+                all_preds.extend(preds)
+                all_labels.extend(labels)
+        
+        # Calculate metrics
+        accuracy = accuracy_score(all_labels, all_preds)
+        report = classification_report(
+            all_labels, 
+            all_preds, 
+            target_names=['Not Antonym', 'Antonym']
+        )
+        
+        logger.info(f"Dual Encoder Test Accuracy for {self.language}: {accuracy:.4f}")
+        logger.info(f"Classification Report:\n{report}")
+        
+        # Save confusion matrix as text to avoid plotting issues
+        cm = confusion_matrix(all_labels, all_preds)
+        logger.info(f"Confusion Matrix for {self.language} Dual Encoder:")
+        logger.info(f"\n{cm}")
+        
+        # Save as text file instead of plot
+        cm_file = self.output_dir / f'{self.language}_dual_encoder_confusion_matrix.txt'
+        with open(cm_file, 'w') as f:
+            f.write(f"Dual Encoder Confusion Matrix for {self.language}:\n")
+            f.write(f"{cm}\n")
+            f.write(f"Classes: ['Not Antonym', 'Antonym']\n")
+        logger.info(f"Saved confusion matrix data to {cm_file}")
+        
+        return {
+            'language': self.language,
+            'accuracy': accuracy,
+            'classification_report': report
+        }
+    
+    def _plot_confusion_matrix(self, cm, title):
+        """Plot and save confusion matrix."""
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(
+            cm, 
+            annot=True, 
+            fmt="d", 
+            cmap="Blues", 
+            xticklabels=["Not Antonym", "Antonym"], 
+            yticklabels=["Not Antonym", "Antonym"]
+        )
+        plt.title(title)
+        plt.xlabel("Predicted Label")
+        plt.ylabel("True Label")
+        plt.tight_layout()
+        
+        save_path = self.output_dir / f'{self.language}_dual_encoder_confusion_matrix.png'
+        plt.savefig(save_path)
+        plt.close()
+        logger.info(f"Saved confusion matrix to {save_path}")
+
+def load_config(config_path):
+    """Load configuration from YAML file."""
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
+
+def main():
+    parser = argparse.ArgumentParser(description='Train multilingual dual encoder for antonym detection')
+    parser.add_argument('--language', type=str, required=True,
+                      help='Language to train on (e.g., german, spanish, french)')
+    parser.add_argument('--config', type=str, 
+                      default='config/language_config.yaml',
+                      help='Path to configuration file')
+    parser.add_argument('--data_dir', type=str,
+                      default='datasets',
+                      help='Directory containing language datasets')
+    parser.add_argument('--output_dir', type=str,
+                      default='assets',
+                      help='Directory to save model outputs')
+    
+    args = parser.parse_args()
+    
+    # Load configuration
+    config = load_config(args.config)
+    
+    # Check if language is supported
+    if args.language not in config['languages']:
+        logger.error(f"Language '{args.language}' not supported.")
+        logger.info(f"Supported languages: {list(config['languages'].keys())}")
+        return
+    
+    # Initialize trainer
+    trainer = MultilingualDualEncoderTrainer(config, args.language, args.output_dir)
+    
+    # Load data
+    train_data, test_data = trainer.load_data(args.data_dir)
+    
+    # Create dataloaders
+    train_loader, test_loader = trainer.create_dataloaders(train_data, test_data)
+    
+    # Train model
+    best_model_path = trainer.train(train_loader, test_loader)
+    
+    # Test model
+    results = trainer.test(test_loader, best_model_path)
+    
+    logger.info("Dual encoder training completed successfully!")
+
+if __name__ == "__main__":
+    main()
