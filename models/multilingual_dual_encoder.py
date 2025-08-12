@@ -158,17 +158,17 @@ class MultilingualDualEncoderTrainer:
                 logger.info(f"Loading fine-tuned BERT from {trained_bert_path}")
                 ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
                 ft_model.load_state_dict(torch.load(trained_bert_path, map_location=self.device))
-                self.bert_model = ft_model.bert.to(self.device)
+                self.bert_model = self._extract_base_model(ft_model).to(self.device)
                 logger.info("✓ Successfully loaded fine-tuned BERT model")
             else:
                 logger.warning(f"Fine-tuned BERT path not found: {trained_bert_path}")
                 logger.info("Using pre-trained BERT (not fine-tuned)")
                 ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
-                self.bert_model = ft_model.bert.to(self.device)
+                self.bert_model = self._extract_base_model(ft_model).to(self.device)
         else:
             logger.info("Using pre-trained BERT (not fine-tuned)")
             ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
-            self.bert_model = ft_model.bert.to(self.device)
+            self.bert_model = self._extract_base_model(ft_model).to(self.device)
         
         self.bert_model.eval()
         
@@ -180,6 +180,30 @@ class MultilingualDualEncoderTrainer:
             heads=2,
             dropout=self.training_config['dropout']
         ).to(self.device)
+        
+    def _extract_base_model(self, model):
+        """Extract the base transformer model from different architectures."""
+        # Try different attribute names for different model types
+        if hasattr(model, 'bert'):
+            return model.bert  # Standard BERT models
+        elif hasattr(model, 'roberta'):
+            return model.roberta  # RoBERTa-based models (CamemBERT, etc.)
+        elif hasattr(model, 'distilbert'):
+            return model.distilbert  # DistilBERT models
+        elif hasattr(model, 'electra'):
+            return model.electra  # ELECTRA models
+        elif hasattr(model, 'albert'):
+            return model.albert  # ALBERT models
+        else:
+            # Fallback: look for any transformer-like attribute
+            for attr_name in dir(model):
+                attr = getattr(model, attr_name)
+                if hasattr(attr, 'embeddings') and hasattr(attr, 'encoder'):
+                    logger.info(f"Found base model using attribute: {attr_name}")
+                    return attr
+            
+            raise AttributeError(f"Could not find base transformer model in {type(model)}. "
+                               f"Available attributes: {[attr for attr in dir(model) if not attr.startswith('_')]}")
         
     def load_data(self, data_dir):
         """Load training and test data."""

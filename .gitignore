@@ -1,6 +1,7 @@
 models/trained
 models/bert
 datasets/
+logs/
 __pycache__
 *.pyc
 *.pyo
