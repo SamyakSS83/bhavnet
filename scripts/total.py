@@ -755,34 +755,135 @@ def plot_selected_grids(plot_map: dict, out_dir: Path, languages: list):
         langs.append('missing')
 
     for grid_name, key in grids.items():
-        fig, axes = plt.subplots(3, 3, figsize=(3*3, 3*3))
-        axes = axes.reshape(3, 3)
-        # iterate over first 8 cells
-        for idx in range(9):
-            r = idx // 3
-            c = idx % 3
-            ax = axes[r, c]
-            ax.axis('off')
-            if idx < 8:
-                lang = langs[idx]
-                pm = plot_map.get(lang, {})
-                p = pm.get(key)
-                if p and p.exists():
-                    try:
-                        img = mpimg.imread(p)
-                        ax.imshow(img, aspect='auto', extent=[0,1,0,1])
-                        ax.set_xlim(0,1)
-                        ax.set_ylim(0,1)
-                        ax.set_title(f"{lang}", fontsize=9)
-                        ax.axis('off')
-                    except Exception:
-                        ax.text(0.5, 0.5, 'failed to load', ha='center')
-                else:
-                    ax.text(0.5, 0.5, 'missing', ha='center')
+        # Try to plot directly from embeddings for consistent axes and scaling
+        coords = {}
+        has_any = False
+        # for bert grids we expect BERT CLS embeddings; for dual we use dual_syn embeddings
+        for lang in langs:
+            coords[lang] = None
+            if 'bert' in grid_name:
+                embf = PROJECT_ROOT / 'models' / 'trained' / 'bert' / 'analysis' / 'embeddings' / f"{lang}_bert_cls_embeddings.npy"
+                labf = PROJECT_ROOT / 'models' / 'trained' / 'bert' / 'analysis' / 'embeddings' / f"{lang}_bert_labels.npy"
             else:
-                # 9th cell: index/legend
-                txt = '\n'.join([f"{i+1}. {l}" for i, l in enumerate(langs)])
-                ax.text(0.02, 0.98, txt, va='top', ha='left', fontsize=10)
+                embf = PROJECT_ROOT / 'models' / 'trained' / 'dual_encoder' / 'analysis' / 'embeddings' / f"{lang}_dual_syn_embeddings.npy"
+                labf = PROJECT_ROOT / 'models' / 'trained' / 'dual_encoder' / 'analysis' / 'embeddings' / f"{lang}_labels.npy"
+
+            if embf.exists():
+                try:
+                    embs = np.load(embf)
+                    n = embs.shape[0]
+                    cap = min(1000, n)
+                    idx = np.random.RandomState(42).choice(n, cap, replace=False) if n > cap else np.arange(n)
+                    X = embs[idx]
+                    labs = None
+                    if labf.exists():
+                        try:
+                            lab_all = np.load(labf)
+                            if lab_all.shape[0] >= n:
+                                labs = lab_all[idx]
+                        except Exception:
+                            labs = None
+
+                    # PCA then TSNE/UMAP as requested
+                    try:
+                        pca = PCA(n_components=min(50, X.shape[1]))
+                        Xp = pca.fit_transform(X)
+                    except Exception:
+                        Xp = X
+
+                    if grid_name.startswith('tsne'):
+                        try:
+                            ts = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+                            X2 = ts.fit_transform(Xp)
+                        except Exception as e:
+                            logger.warning(f"t-SNE failed for {lang} in grid {grid_name}: {e}")
+                            X2 = None
+                    else:
+                        if UMAP is None:
+                            X2 = None
+                        else:
+                            try:
+                                um = UMAP(n_components=2, random_state=42)
+                                X2 = um.fit_transform(Xp)
+                            except Exception as e:
+                                logger.warning(f"UMAP failed for {lang} in grid {grid_name}: {e}")
+                                X2 = None
+
+                    if X2 is not None:
+                        coords[lang] = (X2, labs)
+                        has_any = True
+                except Exception as e:
+                    logger.warning(f"Failed to load embeddings for grid {grid_name} lang {lang}: {e}")
+
+        # If we have embeddings for at least one language, compute global bounds and plot
+        fig, axes = plt.subplots(3, 3, figsize=(9,9))
+        axes = axes.reshape(3, 3)
+        if has_any:
+            # collect min/max
+            xs = []
+            ys = []
+            for lang in langs:
+                v = coords.get(lang)
+                if v is None:
+                    continue
+                X2, _ = v
+                xs.append(X2[:,0])
+                ys.append(X2[:,1])
+            if xs:
+                allx = np.concatenate(xs)
+                ally = np.concatenate(ys)
+                xmin, xmax = np.percentile(allx, [1,99])
+                ymin, ymax = np.percentile(ally, [1,99])
+            else:
+                xmin, xmax, ymin, ymax = -1, 1, -1, 1
+
+            for idx in range(9):
+                r = idx // 3
+                c = idx % 3
+                ax = axes[r, c]
+                ax.axis('off')
+                if idx < 8:
+                    lang = langs[idx]
+                    v = coords.get(lang)
+                    if v is None:
+                        ax.text(0.5, 0.5, 'missing', ha='center')
+                    else:
+                        X2, labs = v
+                        ax.scatter(X2[:,0], X2[:,1], c=(labs if labs is not None else 'C0'), s=8)
+                        ax.set_xlim(xmin, xmax)
+                        ax.set_ylim(ymin, ymax)
+                        ax.set_title(lang, fontsize=9)
+                        ax.axis('off')
+                else:
+                    txt = '\n'.join([f"{i+1}. {l}" for i, l in enumerate(langs)])
+                    ax.text(0.02, 0.98, txt, va='top', ha='left', fontsize=10)
+
+        else:
+            # fallback: copy existing PNGs into grid cells
+            for idx in range(9):
+                r = idx // 3
+                c = idx % 3
+                ax = axes[r, c]
+                ax.axis('off')
+                if idx < 8:
+                    lang = langs[idx]
+                    pm = plot_map.get(lang, {})
+                    p = pm.get(key)
+                    if p and p.exists():
+                        try:
+                            img = mpimg.imread(p)
+                            ax.imshow(img, aspect='auto', extent=[0,1,0,1])
+                            ax.set_xlim(0,1)
+                            ax.set_ylim(0,1)
+                            ax.set_title(f"{lang}", fontsize=9)
+                            ax.axis('off')
+                        except Exception:
+                            ax.text(0.5, 0.5, 'failed to load', ha='center')
+                    else:
+                        ax.text(0.5, 0.5, 'missing', ha='center')
+                else:
+                    txt = '\n'.join([f"{i+1}. {l}" for i, l in enumerate(langs)])
+                    ax.text(0.02, 0.98, txt, va='top', ha='left', fontsize=10)
 
         plt.tight_layout()
         outp = out_dir / f'grid_{grid_name}.png'
