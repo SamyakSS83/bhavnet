@@ -127,19 +127,19 @@ log_message "Running analysis script (embeddings + basic plots)"
 "${ANALYSIS_CMD[@]}" --config /home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml 2>&1 | tee -a "$MASTER_LOG"
 
 # Run baseline probes (mBERT and XLM-R) in parallel for all languages
-log_message "Launching baseline probes (mBERT, XLM-R) in parallel"
+log_message "Launching baseline probes (mBERT, XLM-R) sequentially (one language at a time)"
 for lang in $(python3 - <<'PY'
 import yaml
 cfg = yaml.safe_load(open('/home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml'))
 print(' '.join(cfg['languages'].keys()))
 PY
 ); do
-    (
-        python3 analysis.py --config /home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml --languages $lang --baseline mbert 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/analysis_${lang}_mbert.log &
-        python3 analysis.py --config /home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml --languages $lang --baseline xlmr 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/analysis_${lang}_xlmr.log &
-    )
+    log_message "Running baselines for $lang: mBERT"
+    python3 analysis.py --config /home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml --languages $lang --baseline mbert 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/analysis_${lang}_mbert.log
+
+    log_message "Running baselines for $lang: XLM-R"
+    python3 analysis.py --config /home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml --languages $lang --baseline xlmr 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/analysis_${lang}_xlmr.log
 done
-wait
 
 # Run ablation (small example grid) for first language to demonstrate
 FIRST_LANG=$(python3 - <<'PY'

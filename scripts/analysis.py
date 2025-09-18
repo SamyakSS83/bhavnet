@@ -369,14 +369,17 @@ class Analyzer:
             cmd = [
                 'python3', 'train_models.py',
                 '--language', language,
-                '--model-type', 'dual',
+                '--model-type', 'dual_encoder',
                 '--config', str(per_run_cfg_path),
                 '--output_dir', str(run_dir)
             ]
 
             logger.info(f"Launching ablation run {i+1}/{len(combos)}: {' '.join(cmd)}")
+            # Launch sequentially to avoid OOM - start and wait for each run before launching next
             proc = subprocess.Popen(cmd)
-            runs.append({'proc': proc, 'cmd': cmd, 'run_dir': str(run_dir), 'params': params})
+            proc.wait()
+            logger.info(f"Ablation subprocess finished for run {i+1}")
+            runs.append({'proc': None, 'cmd': cmd, 'run_dir': str(run_dir), 'params': params})
 
         # Wait for processes to complete and collect final accuracy from history CSVs
         summary = []
