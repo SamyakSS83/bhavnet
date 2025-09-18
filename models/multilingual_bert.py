@@ -12,12 +12,16 @@ import numpy as np
 import os
 import argparse
 import yaml
+import time
+from sklearn.manifold import TSNE
+import csv
 from tqdm import tqdm
 # Set matplotlib backend before importing pyplot to avoid segfaults
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 import seaborn as sns
+import torch.nn.functional as F
 import logging
 from pathlib import Path
 
@@ -60,7 +64,9 @@ class WordPairDataset(Dataset):
         return {
             'input_ids': encoding['input_ids'].flatten(),
             'attention_mask': encoding['attention_mask'].flatten(),
-            'labels': torch.tensor(label, dtype=torch.long)
+            'labels': torch.tensor(label, dtype=torch.long),
+            'word1': word1,
+            'word2': word2
         }
 
 class MultilingualBertTrainer:
@@ -71,6 +77,14 @@ class MultilingualBertTrainer:
         self.language = language
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # Analysis / assets directories
+        self.analysis_dir = self.output_dir / 'analysis'
+        self.plots_dir = self.analysis_dir / 'plots'
+        self.tables_dir = self.analysis_dir / 'tables'
+        self.svg_dir = self.analysis_dir / 'svg'
+        self.emb_dir = self.analysis_dir / 'embeddings'
+        for d in (self.analysis_dir, self.plots_dir, self.tables_dir, self.svg_dir, self.emb_dir):
+            d.mkdir(parents=True, exist_ok=True)
         
         # Set device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -160,6 +174,8 @@ class MultilingualBertTrainer:
         best_model_path = self.output_dir / f'best_{self.language}_bert_model.pt'
         
         logger.info(f"Starting training for {num_epochs} epochs...")
+        history = {'epoch': [], 'train_loss': [], 'val_acc': [], 'epoch_time': []}
+        total_start = time.time()
         
         for epoch in range(num_epochs):
             # Training phase
@@ -204,7 +220,34 @@ class MultilingualBertTrainer:
                 best_val_accuracy = val_accuracy
                 torch.save(self.model.state_dict(), best_model_path)
                 logger.info(f"Saved new best model with validation accuracy: {val_accuracy:.4f}")
+            # record history
+            history['epoch'].append(epoch+1)
+            history['train_loss'].append(train_loss/train_steps)
+            history['val_acc'].append(val_accuracy)
+            history['epoch_time'].append(time.time() - total_start)
         
+        # Save history and plots
+        try:
+            import time as _time
+            hist_df = pd.DataFrame(history)
+            hist_csv = self.tables_dir / f'{self.language}_bert_training_history.csv'
+            hist_df.to_csv(hist_csv, index=False)
+            logger.info(f"Saved BERT training history to {hist_csv}")
+            # plots
+            self._plot_bert_training_curves(history)
+            # save example embeddings from validation set
+            self._collect_and_save_bert_embeddings(val_loader)
+            # simple svg
+            svg_path = self.svg_dir / f'{self.language}_bert_architecture.svg'
+            with open(svg_path, 'w') as f:
+                f.write('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="80">\n')
+                f.write('<rect x="10" y="10" width="120" height="40" fill="#e3f2fd" stroke="#1565c0"/>\n')
+                f.write('<text x="20" y="35" font-size="12" fill="#1565c0">BERT Encoder + Classifier</text>\n')
+                f.write('</svg>')
+            logger.info(f"Saved BERT architecture SVG to {svg_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save BERT analysis artifacts: {e}")
+
         return best_model_path
     
     def _evaluate(self, data_loader):
@@ -226,16 +269,85 @@ class MultilingualBertTrainer:
                 all_labels.extend(labels.cpu().numpy())
         
         return accuracy_score(all_labels, all_preds)
+
+    def _plot_bert_training_curves(self, history: dict):
+        try:
+            df = pd.DataFrame(history)
+            plt.figure(figsize=(8,4))
+            plt.plot(df['epoch'], df['train_loss'], label='Train Loss')
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss')
+            plt.title(f'{self.language} - BERT Training Loss')
+            plt.grid(True)
+            save_path = self.plots_dir / f'{self.language}_bert_loss.png'
+            plt.savefig(save_path)
+            plt.close()
+            logger.info(f"Saved BERT loss plot to {save_path}")
+
+            plt.figure(figsize=(8,4))
+            plt.plot(df['epoch'], df['val_acc'], label='Val Acc', color='green')
+            plt.xlabel('Epoch')
+            plt.ylabel('Accuracy')
+            plt.title(f'{self.language} - BERT Validation Accuracy')
+            plt.grid(True)
+            save_path = self.plots_dir / f'{self.language}_bert_val_acc.png'
+            plt.savefig(save_path)
+            plt.close()
+            logger.info(f"Saved BERT val-accuracy plot to {save_path}")
+        except Exception as e:
+            logger.warning(f"Failed to plot BERT training curves: {e}")
+
+    def _collect_and_save_bert_embeddings(self, data_loader):
+        try:
+            self.model.eval()
+            embs = []
+            labels = []
+            with torch.no_grad():
+                for batch in tqdm(data_loader, desc='Collect BERT embeddings'):
+                    input_ids = batch['input_ids'].to(self.device)
+                    attention_mask = batch['attention_mask'].to(self.device)
+                    outputs = self.model.base_model(input_ids, attention_mask=attention_mask)
+                    # Some models return last_hidden_state directly
+                    last_hidden = getattr(outputs, 'last_hidden_state', None)
+                    if last_hidden is None:
+                        # Try outputs[0]
+                        last_hidden = outputs[0]
+                    cls_emb = last_hidden[:, 0, :].cpu().numpy()
+                    embs.append(cls_emb)
+                    labels.extend(batch['labels'].numpy().tolist())
+
+            embs = np.vstack(embs)
+            np.save(self.emb_dir / f'{self.language}_bert_cls_embeddings.npy', embs)
+            np.save(self.emb_dir / f'{self.language}_bert_labels.npy', np.asarray(labels))
+            logger.info(f"Saved BERT CLS embeddings to {self.emb_dir}")
+
+            # t-SNE sample
+            try:
+                sample_n = min(2000, embs.shape[0])
+                idx = np.linspace(0, embs.shape[0]-1, sample_n, dtype=int)
+                tsne = TSNE(n_components=2, random_state=42)
+                emb2 = tsne.fit_transform(embs[idx])
+                plt.figure(figsize=(8,4))
+                plt.scatter(emb2[:,0], emb2[:,1], c=np.asarray(labels)[idx], cmap='coolwarm', s=5)
+                plt.title(f'{self.language} - BERT CLS t-SNE')
+                plt.savefig(self.plots_dir / f'{self.language}_bert_tsne.png')
+                plt.close()
+                logger.info(f"Saved BERT t-SNE to {self.plots_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to compute BERT t-SNE: {e}")
+
+        except Exception as e:
+            logger.warning(f"Failed to collect BERT embeddings: {e}")
     
     def test(self, test_loader, model_path):
         """Test the model and generate detailed results."""
         # Load best model
         self.model.load_state_dict(torch.load(model_path))
         self.model.eval()
-        
         all_preds = []
         all_labels = []
-        
+        per_sample_rows = []
+
         logger.info("Evaluating on test set...")
         with torch.no_grad():
             for batch in tqdm(test_loader):
@@ -245,9 +357,28 @@ class MultilingualBertTrainer:
 
                 outputs = self.model(input_ids, attention_mask=attention_mask)
                 preds = torch.argmax(outputs.logits, dim=1)
-                
-                all_preds.extend(preds.cpu().numpy())
+                probs = F.softmax(outputs.logits, dim=1).cpu().numpy()
+                pred_np = preds.cpu().numpy()
+                all_preds.extend(pred_np)
                 all_labels.extend(labels.cpu().numpy())
+
+                # Collect per-sample predictions (words may be lists in batch)
+                w1s = batch.get('word1', None)
+                w2s = batch.get('word2', None)
+                if w1s is None or w2s is None:
+                    # try to recover from dataset if possible
+                    w1s = [None] * len(pred_np)
+                    w2s = [None] * len(pred_np)
+
+                for i in range(len(pred_np)):
+                    score = float(probs[i, int(pred_np[i])]) if probs is not None else None
+                    per_sample_rows.append({
+                        'word1': w1s[i],
+                        'word2': w2s[i],
+                        'label': int(labels.cpu().numpy()[i]),
+                        'pred': int(pred_np[i]),
+                        'score': score
+                    })
         
         # Calculate metrics
         accuracy = accuracy_score(all_labels, all_preds)
@@ -275,6 +406,17 @@ class MultilingualBertTrainer:
             'accuracy': accuracy,
             'classification_report': report
         }
+
+        # Save per-sample predictions for detailed analysis
+        try:
+            save_dir = self.analysis_dir / self.language
+            save_dir.mkdir(parents=True, exist_ok=True)
+            preds_df = pd.DataFrame(per_sample_rows)
+            preds_csv = save_dir / f'{self.language}_bert_predictions.csv'
+            preds_df.to_csv(preds_csv, index=False)
+            logger.info(f"Saved per-sample BERT predictions to {preds_csv}")
+        except Exception as e:
+            logger.warning(f"Failed to save per-sample BERT predictions: {e}")
         
         # Plot confusion matrix with error handling
         try:

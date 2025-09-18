@@ -117,6 +117,41 @@ fi
 
 log_message ""
 log_message "========================================================="
+log_message "PHASE 3: ANALYSIS & BASELINES"
+log_message "========================================================="
+
+# Run analysis: embeddings, plots, and baseline probes
+ANALYSIS_CMD=("python3" "scripts/analysis.py")
+log_message "Running analysis script (embeddings + basic plots)"
+"${ANALYSIS_CMD[@]}" --config config/language_config.yaml 2>&1 | tee -a "$MASTER_LOG"
+
+# Run baseline probes (mBERT and XLM-R) in parallel for all languages
+log_message "Launching baseline probes (mBERT, XLM-R) in parallel"
+for lang in $(python3 - <<'PY'
+import yaml
+cfg = yaml.safe_load(open('config/language_config.yaml'))
+print(' '.join(cfg['languages'].keys()))
+PY
+); do
+    (
+        python3 scripts/analysis.py --config config/language_config.yaml --languages $lang --baseline mbert 2>&1 | tee -a ../logs/analysis_${lang}_mbert.log &
+        python3 scripts/analysis.py --config config/language_config.yaml --languages $lang --baseline xlmr 2>&1 | tee -a ../logs/analysis_${lang}_xlmr.log &
+    )
+done
+wait
+
+# Run ablation (small example grid) for first language to demonstrate
+FIRST_LANG=$(python3 - <<'PY'
+import yaml
+cfg = yaml.safe_load(open('config/language_config.yaml'))
+print(list(cfg['languages'].keys())[0])
+PY
+)
+log_message "Launching ablation runs for $FIRST_LANG"
+python3 scripts/analysis.py --config config/language_config.yaml --ablation --languages $FIRST_LANG 2>&1 | tee -a ../logs/ablation_${FIRST_LANG}.log
+
+log_message ""
+log_message "========================================================="
 log_message "Training session completed with exit code: $EXIT_CODE"
 log_message "Check individual log files for detailed training information"
 log_message "========================================================="
