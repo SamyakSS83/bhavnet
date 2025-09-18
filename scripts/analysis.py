@@ -515,7 +515,7 @@ class Analyzer:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default='config/language_config.yaml')
+    parser.add_argument('--config', default='/home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml')
     parser.add_argument('--languages', nargs='+', default=None)
     parser.add_argument('--baseline', choices=['mbert', 'xlmr', 'both'], default=None,
                         help='Run baseline probe(s): mbert, xlmr or both')
