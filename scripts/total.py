@@ -487,7 +487,11 @@ def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap
             cap = min(per_lang_cap, n)
             idx = np.random.RandomState(42).choice(n, cap, replace=False) if n > cap else np.arange(n)
             X = embs[idx]
-            y = labels[idx] if (labels is not None and len(labels) > 0) else None
+            # only use labels if the labels array length matches embeddings length
+            if labels is not None and len(labels) == n:
+                y = labels[idx]
+            else:
+                y = None
 
             # PCA preproj
             try:
@@ -546,7 +550,15 @@ def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap
             cap = min(per_lang_cap, n)
             idx = np.random.RandomState(42).choice(n, cap, replace=False) if n > cap else np.arange(n)
             X = embs[idx]
-            y = np.load(dual_labels)[idx] if dual_labels.exists() else None
+            # load labels safely only if lengths match
+            if dual_labels.exists():
+                labs = np.load(dual_labels)
+                if len(labs) == n:
+                    y = labs[idx]
+                else:
+                    y = None
+            else:
+                y = None
 
             try:
                 pca = PCA(n_components=min(50, X.shape[1]))
@@ -597,7 +609,14 @@ def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap
             cap = min(per_lang_cap, n)
             idx = np.random.RandomState(42).choice(n, cap, replace=False) if n > cap else np.arange(n)
             X = embs[idx]
-            y = np.load(dual_labels)[idx] if dual_labels.exists() else None
+            if dual_labels.exists():
+                labs = np.load(dual_labels)
+                if len(labs) == n:
+                    y = labs[idx]
+                else:
+                    y = None
+            else:
+                y = None
 
             try:
                 pca = PCA(n_components=min(50, X.shape[1]))
@@ -710,6 +729,48 @@ def plot_individual_and_grid(plot_map: dict, out_dir: Path):
     logger.info(f"Saved per-language grid of TSNE/UMAP plots to {grid_path}")
 
 
+def _build_focused_grids(plot_map: dict, out_dir: Path):
+    """Build four focused grids: BERT t-SNE, Dual t-SNE, BERT UMAP, Dual UMAP.
+
+    Each grid will have one column per language and will be saved under out_dir/grids.
+    """
+    grid_root = out_dir / 'grids'
+    grid_root.mkdir(parents=True, exist_ok=True)
+    import matplotlib.image as mpimg
+
+    # Define mapping for the four grids
+    grids = {
+        'bert_tsne_grid': 'bert_tsne',
+        'dual_tsne_grid': 'dual_syn_tsne',
+        'bert_umap_grid': 'bert_umap',
+        'dual_umap_grid': 'dual_syn_umap'
+    }
+
+    langs = list(plot_map.keys())
+    for grid_name, key in grids.items():
+        n_cols = len(langs)
+        fig, axes = plt.subplots(1, n_cols, figsize=(4*n_cols, 4))
+        axes = np.atleast_1d(axes)
+        for i, lang in enumerate(langs):
+            ax = axes[i]
+            p = plot_map[lang].get(key)
+            ax.axis('off')
+            if p and p.exists():
+                try:
+                    img = mpimg.imread(p)
+                    ax.imshow(img, aspect='auto', extent=[0,1,0,1])
+                except Exception:
+                    ax.text(0.5, 0.5, 'failed', ha='center')
+            else:
+                ax.text(0.5, 0.5, 'missing', ha='center')
+            ax.set_title(lang, fontsize=9)
+        plt.tight_layout()
+        outp = grid_root / f"{grid_name}.png"
+        fig.savefig(outp, dpi=150)
+        plt.close(fig)
+        logger.info(f"Saved focused grid {outp}")
+
+
 
 
 
@@ -752,3 +813,8 @@ if __name__ == '__main__':
         logger.info('Collecting per-language TSNE/UMAP plots and building grid...')
         plot_map = collect_per_language_plots(args.languages)
         plot_individual_and_grid(plot_map, out_dir)
+        # Also build focused grids: bert tsne, dual tsne, bert umap, dual umap
+        try:
+            _build_focused_grids(plot_map, out_dir)
+        except Exception as e:
+            logger.warning(f'Failed to build focused grids: {e}')
