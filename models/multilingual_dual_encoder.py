@@ -137,8 +137,8 @@ class DualEncoderGraphTransformer(nn.Module):
 
 class MultilingualDualEncoderTrainer:
     """Trainer for the multilingual dual encoder graph transformer."""
-    
-    def __init__(self, config, language, output_dir):
+
+    def __init__(self, config, language, output_dir, use_trained_bert: bool = True):
         self.config = config
         self.language = language
         self.output_dir = Path(output_dir)
@@ -155,48 +155,55 @@ class MultilingualDualEncoderTrainer:
         # Device setup
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logger.info(f"Using device: {self.device}")
-        
+
         # Get configuration
         self.lang_config = config['languages'][language]
-        self.training_config = config['training']
-        
+        self.training_config = config.get('training', {})
+        self.use_trained_bert = use_trained_bert
+
         # Load pre-trained BERT model
         self.model_name = self.lang_config['bert_model']
         logger.info(f"Loading BERT model: {self.model_name}")
-        # Explicit handling/log for English datasets if required
-        if self.language.lower() == 'english' or self.language.lower() == 'en':
-            logger.info("English language selected — ensure dataset paths are under 'dataset/' or 'datasets/english'.")
-        
+        # Explicit handling/log for English datasets
+        if self.language.lower() in ('english', 'en'):
+            logger.info("English language selected — will use legacy 'dataset/' for data and pre-trained BERT base (no fine-tuned weights by default)")
+
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        
-        # Load fine-tuned BERT if available
-        if 'trained_bert_path' in self.lang_config:
-            trained_bert_path = Path(self.lang_config['trained_bert_path'])
-            if trained_bert_path.exists():
-                logger.info(f"Loading fine-tuned BERT from {trained_bert_path}")
-                ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
-                ft_model.load_state_dict(torch.load(trained_bert_path, map_location=self.device))
-                self.bert_model = self._extract_base_model(ft_model).to(self.device)
-                logger.info("✓ Successfully loaded fine-tuned BERT model")
+
+        # Decide whether to load fine-tuned BERT: for non-English, load if trained_bert_path present by default
+        if self.language.lower() in ('english', 'en'):
+            ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
+            self.bert_model = self._extract_base_model(ft_model).to(self.device)
+        else:
+            # For non-English, prefer fine-tuned if available unless explicitly disabled
+            trained_path = self.lang_config.get('trained_bert_path', None)
+            if trained_path and Path(trained_path).exists() and self.use_trained_bert:
+                try:
+                    trained_bert_path = Path(trained_path)
+                    logger.info(f"Loading fine-tuned BERT from {trained_bert_path}")
+                    ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
+                    ft_model.load_state_dict(torch.load(trained_bert_path, map_location=self.device))
+                    self.bert_model = self._extract_base_model(ft_model).to(self.device)
+                    logger.info("✓ Successfully loaded fine-tuned BERT model")
+                except Exception as e:
+                    logger.warning(f"Failed to load fine-tuned BERT from {trained_bert_path}: {e}")
+                    logger.info("Falling back to pre-trained BERT")
+                    ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
+                    self.bert_model = self._extract_base_model(ft_model).to(self.device)
             else:
-                logger.warning(f"Fine-tuned BERT path not found: {trained_bert_path}")
                 logger.info("Using pre-trained BERT (not fine-tuned)")
                 ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
                 self.bert_model = self._extract_base_model(ft_model).to(self.device)
-        else:
-            logger.info("Using pre-trained BERT (not fine-tuned)")
-            ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
-            self.bert_model = self._extract_base_model(ft_model).to(self.device)
-        
+
         self.bert_model.eval()
         
         # Initialize dual encoder model
         self.model = DualEncoderGraphTransformer(
             in_channels=768,  # BERT hidden size
-            hidden_channels=self.training_config['hidden_dim'],
+            hidden_channels=self.training_config.get('hidden_dim', 256),
             out_channels=2,
             heads=2,
-            dropout=self.training_config['dropout']
+            dropout=self.training_config.get('dropout', 0.2)
         ).to(self.device)
 
     def _extract_base_model(self, ft_model):
@@ -312,8 +319,8 @@ class MultilingualDualEncoderTrainer:
     
     def compute_margin_loss(self, model, data):
         """Compute margin-based loss for dual projections."""
-        margin_syn = self.training_config['margin_syn']
-        margin_ant = self.training_config['margin_ant']
+        margin_syn = self.training_config.get('margin_syn', 0.8)
+        margin_ant = self.training_config.get('margin_ant', 0.2)
         losses = []
         
         batch = data.batch.cpu().numpy()
@@ -342,12 +349,57 @@ class MultilingualDualEncoderTrainer:
             return torch.stack(losses).mean()
         else:
             return torch.tensor(0.0, device=self.device)
+
+    def load_data(self, data_root: str):
+        """Load train/test data for the language. For English, prefer legacy dataset/ files.
+
+        Returns (train_df, test_df)
+        """
+        data_root = Path(data_root)
+        if self.language.lower() in ('english', 'en'):
+            # Legacy layout under project_root/dataset/*.train/*.test
+            legacy = Path(__file__).parent.parent / 'dataset'
+            def read_legacy(suffix):
+                frames = []
+                for kind in ('adjective-pairs', 'noun-pairs', 'verb-pairs'):
+                    f = legacy / f"{kind}.{suffix}"
+                    if f.exists():
+                        try:
+                            df = pd.read_csv(f, sep='\t', header=None, names=['word1', 'word2', 'label'])
+                            frames.append(df)
+                        except Exception:
+                            continue
+                if frames:
+                    return pd.concat(frames, ignore_index=True)
+                return pd.DataFrame()
+
+            train_df = read_legacy('train')
+            test_df = read_legacy('test')
+            return train_df, test_df
+        else:
+            lang_dir = data_root / self.language
+            train_file = lang_dir / 'train.txt'
+            test_file = lang_dir / 'test.txt'
+            train_df = pd.read_csv(train_file, sep='\t', header=None, names=['word1', 'word2', 'label']) if train_file.exists() else pd.DataFrame()
+            test_df = pd.read_csv(test_file, sep='\t', header=None, names=['word1', 'word2', 'label']) if test_file.exists() else pd.DataFrame()
+            return train_df, test_df
+
+    def create_dataloaders(self, train_df, test_df):
+        """Create GeoDataLoader for train and test graphs."""
+        batch_size = self.training_config.get('batch_size', 16)
+        # Build datasets: WordPairGraphDataset maps pairs to 2-node graphs using bert_model
+        train_dataset = WordPairGraphDataset(train_df, self.bert_model, self.tokenizer, self.device)
+        test_dataset = WordPairGraphDataset(test_df, self.bert_model, self.tokenizer, self.device)
+
+        train_loader = GeoDataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_loader = GeoDataLoader(test_dataset, batch_size=batch_size)
+        return train_loader, test_loader
     
     def train(self, train_loader, test_loader):
         """Train the dual encoder model with early stopping."""
-        num_epochs = self.training_config['num_epochs']
-        learning_rate = self.training_config['learning_rate']
-        margin_weight = self.training_config['margin_weight']
+        num_epochs = self.training_config.get('num_epochs', self.training_config.get('epochs', 10))
+        learning_rate = self.training_config.get('learning_rate', self.training_config.get('lr', 1e-4))
+        margin_weight = self.training_config.get('margin_weight', 0.5)
         
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         criterion = nn.CrossEntropyLoss()
