@@ -198,6 +198,23 @@ class MultilingualDualEncoderTrainer:
             heads=2,
             dropout=self.training_config['dropout']
         ).to(self.device)
+
+    def _extract_base_model(self, ft_model):
+        """Extract the underlying base transformer from a SequenceClassification model.
+
+        Many HF models wrap the base model under attributes like `base_model`, `bert`, or `roberta`.
+        Return the first matching attribute or the model itself as a fallback.
+        """
+        # Common attribute names that hold the base encoder
+        for attr in ('base_model', 'bert', 'roberta', 'distilbert', 'transformer', 'model'):
+            if hasattr(ft_model, attr):
+                base = getattr(ft_model, attr)
+                logger.info(f"Extracted base model using attribute '{attr}'")
+                return base
+
+        # Fallback: try calling the model and inspect output for last_hidden_state
+        logger.warning("Could not find a conventional base_model attribute; using the full model as-is")
+        return ft_model
         
     def test(self, test_loader, model_path):
         """Test the model and generate detailed results.
