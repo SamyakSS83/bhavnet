@@ -527,6 +527,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--languages', nargs='+', help='Optional list of languages to aggregate')
     parser.add_argument('--recompile', action='store_true', help='Recompute combined embeddings (t-SNE/UMAP) and recompile final plots')
+    parser.add_argument('--grid', dest='grid', action='store_true', help='Build per-language grid of TSNE/UMAP plots')
+    parser.add_argument('--no-grid', dest='grid', action='store_false', help='Do not build per-language grid of plots')
+    parser.set_defaults(grid=True)
     args = parser.parse_args()
     df = aggregate(args.languages)
     print(df)
@@ -537,3 +540,9 @@ if __name__ == '__main__':
         plot_combined_embeddings(PROJECT_ROOT, out_dir, max_points=5000, per_lang_cap=1000)
         # recompile the comparison plot using the possibly-updated df
         make_comparison_plot(df, OUT_PNG)
+    # By default, build a per-language grid of available TSNE/UMAP plots
+    if args.grid:
+        out_dir = ASSETS_ANALYSIS / 'combined_embeddings'
+        logger.info('Collecting per-language TSNE/UMAP plots and building grid...')
+        plot_map = collect_per_language_plots(args.languages)
+        plot_individual_and_grid(plot_map, out_dir)
