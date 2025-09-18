@@ -155,22 +155,64 @@ class MultilingualTrainingSystem:
         return True
     
     def load_dataset(self, language: str) -> Dict[str, pd.DataFrame]:
-        """Load train/val/test datasets for a language."""
-        lang_dir = self.datasets_dir / language
-        
-        datasets = {}
-        for split in ['train', 'val', 'test']:
-            file_path = lang_dir / f'{split}.txt'
-            
-            if file_path.exists():
-                df = pd.read_csv(file_path, sep='\t', header=None, names=['word1', 'word2', 'label'])
-                datasets[split] = df
-                logger.info(f"Loaded {len(df)} {split} examples for {language}")
-            else:
-                logger.error(f"Dataset file not found: {file_path}")
-                return None
-        
-        return datasets
+            """Load train/val/test datasets for a language.
+
+            This supports the current layout datasets/<lang>/{train,val,test}.txt
+            and also the legacy layout under dataset/ for English (adjective/noun/verb pairs)
+            when the datasets/english directory is missing or when forced via CLI.
+            """
+            # Primary path: datasets/<language>/
+            lang_dir = self.datasets_dir / language
+
+            datasets = {}
+
+            # If user forced legacy mode for English, or lang_dir missing, try legacy layout
+            if (language.lower() == 'english' and not lang_dir.exists()) or getattr(self, 'force_legacy_dataset', False):
+                # Legacy files are in ../dataset/ with splits per POS (adjective/noun/verb)
+                legacy_dir = Path(__file__).parent.parent / 'dataset'
+                # Try to assemble train/val/test from adjective/noun/verb aggregated files if present
+                def try_legacy(split_name: str) -> Optional[pd.DataFrame]:
+                    candidates = [
+                        legacy_dir / f'adjective-pairs.{split_name}',
+                        legacy_dir / f'noun-pairs.{split_name}',
+                        legacy_dir / f'verb-pairs.{split_name}',
+                    ]
+                    frames = []
+                    for c in candidates:
+                        if c.exists():
+                            try:
+                                df = pd.read_csv(c, sep='\t', header=None, names=['word1', 'word2', 'label'])
+                                frames.append(df)
+                            except Exception as e:
+                                logger.warning(f"Failed to read legacy file {c}: {e}")
+                    if frames:
+                        return pd.concat(frames, ignore_index=True)
+                    return None
+
+                for split in ['train', 'val', 'test']:
+                    df = try_legacy(split)
+                    if df is not None:
+                        datasets[split] = df
+                        logger.info(f"Loaded {len(df)} {split} examples for {language} (legacy)")
+                    else:
+                        logger.error(f"Legacy dataset split not found for {split} in {legacy_dir}")
+                        return None
+
+                return datasets
+
+            # Default (modern) layout
+            for split in ['train', 'val', 'test']:
+                file_path = lang_dir / f'{split}.txt'
+
+                if file_path.exists():
+                    df = pd.read_csv(file_path, sep='\t', header=None, names=['word1', 'word2', 'label'])
+                    datasets[split] = df
+                    logger.info(f"Loaded {len(df)} {split} examples for {language}")
+                else:
+                    logger.error(f"Dataset file not found: {file_path}")
+                    return None
+
+            return datasets
     
     def get_bert_model_path(self, language: str) -> Optional[Path]:
         """Get the appropriate BERT model path for a language."""
@@ -458,6 +500,8 @@ class MultilingualTrainingSystem:
 def main():
     parser = argparse.ArgumentParser(description='Train multilingual antonym detection models')
     parser.add_argument('--config', default='/home/samyak/scratch/temp/multilingual_antonym_detection/config/training_config.yaml', help='Training configuration file')
+    parser.add_argument('--datasets-dir', help='Override datasets base directory')
+    parser.add_argument('--use-legacy-dataset', action='store_true', help='Force using the legacy dataset layout under dataset/ (useful for English)')
     parser.add_argument('--language', help='Train specific language only')
     parser.add_argument('--model-type', choices=['bert', 'dual_encoder'], help='Train specific model type only')
     parser.add_argument('--check-only', action='store_true', help='Only check prerequisites')
