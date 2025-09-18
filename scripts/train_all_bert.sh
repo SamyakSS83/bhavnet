@@ -20,7 +20,7 @@ train_language() {
     echo "==============================================="
     
     # Run training and capture all output to log file
-    python3 train_models.py --language $lang --model-type bert --epochs 12 > "$logfile" 2>&1
+    python3 train_models.py --language $lang --model-type bert --epochs 25 > "$logfile" 2>&1
     
     # Check if training was successful by looking for the model file
     if [ -f "/home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/bert/best_${lang}_bert_model.pt" ]; then
