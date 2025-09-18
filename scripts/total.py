@@ -22,6 +22,7 @@ import json
 from sklearn.manifold import TSNE
 from sklearn.metrics import f1_score
 from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
 try:
     from umap import UMAP
 except Exception:
@@ -479,6 +480,21 @@ def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap
     bert_emb_root = PROJECT_ROOT / 'models' / 'trained' / 'bert' / 'analysis' / 'embeddings'
     dual_emb_root = PROJECT_ROOT / 'models' / 'trained' / 'dual_encoder' / 'analysis' / 'embeddings'
 
+    # Helper to create KMeans pseudo-labels when labels missing
+    def _pseudo_labels_for_visualization(X):
+        try:
+            # small PCA to reduce noise
+            try:
+                p_small = PCA(n_components=min(10, X.shape[1]))
+                Xs = p_small.fit_transform(X)
+            except Exception:
+                Xs = X
+            km = KMeans(n_clusters=2, random_state=42, n_init=10)
+            labs = km.fit_predict(Xs)
+            return labs
+        except Exception:
+            return None
+
     # BERT CLS embeddings
     bert_file = bert_emb_root / f"{lang}_bert_cls_embeddings.npy"
     bert_labels = bert_emb_root / f"{lang}_bert_labels.npy"
@@ -511,7 +527,7 @@ def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap
                 if y is not None:
                     sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
                 else:
-                    ax.scatter(Xt[:,0], Xt[:,1], s=10)
+                    ax.scatter(Xt[:,0], Xt[:,1], s=10, c='C0')
                 ax.set_title(f"{lang} - BERT CLS t-SNE")
                 p = out_plots_dir / f"{lang}_bert_tsne.png"
                 fig.savefig(p, dpi=150)
@@ -529,7 +545,7 @@ def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap
                     if y is not None:
                         sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
                     else:
-                        ax.scatter(Xu[:,0], Xu[:,1], s=10)
+                        ax.scatter(Xu[:,0], Xu[:,1], s=10, c='C0')
                     ax.set_title(f"{lang} - BERT CLS UMAP")
                     p = out_plots_dir / f"{lang}_bert_umap.png"
                     fig.savefig(p, dpi=150)
@@ -573,10 +589,13 @@ def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap
                 ts = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
                 Xt = ts.fit_transform(Xp)
                 fig, ax = plt.subplots(figsize=(6,5))
+                # If labels missing, create pseudo-labels via KMeans for visualization
+                if y is None:
+                    y = _pseudo_labels_for_visualization(X)
                 if y is not None:
-                    sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
+                    sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y, palette='tab10', s=10, ax=ax, legend=False)
                 else:
-                    ax.scatter(Xt[:,0], Xt[:,1], s=10)
+                    ax.scatter(Xt[:,0], Xt[:,1], s=10, c='C1')
                 ax.set_title(f"{lang} - Dual Syn t-SNE")
                 p = out_plots_dir / f"{lang}_dual_syn_tsne.png"
                 fig.savefig(p, dpi=150)
@@ -590,10 +609,12 @@ def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap
                     um = UMAP(n_components=2, random_state=42)
                     Xu = um.fit_transform(Xp)
                     fig, ax = plt.subplots(figsize=(6,5))
+                    if y is None:
+                        y = _pseudo_labels_for_visualization(X)
                     if y is not None:
-                        sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
+                        sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y, palette='tab10', s=10, ax=ax, legend=False)
                     else:
-                        ax.scatter(Xu[:,0], Xu[:,1], s=10)
+                        ax.scatter(Xu[:,0], Xu[:,1], s=10, c='C1')
                     ax.set_title(f"{lang} - Dual Syn UMAP")
                     p = out_plots_dir / f"{lang}_dual_syn_umap.png"
                     fig.savefig(p, dpi=150)
@@ -631,10 +652,12 @@ def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap
                 ts = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
                 Xt = ts.fit_transform(Xp)
                 fig, ax = plt.subplots(figsize=(6,5))
+                if y is None:
+                    y = _pseudo_labels_for_visualization(X)
                 if y is not None:
-                    sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
+                    sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y, palette='tab10', s=10, ax=ax, legend=False)
                 else:
-                    ax.scatter(Xt[:,0], Xt[:,1], s=10)
+                    ax.scatter(Xt[:,0], Xt[:,1], s=10, c='C1')
                 ax.set_title(f"{lang} - Dual Ant t-SNE")
                 p = out_plots_dir / f"{lang}_dual_ant_tsne.png"
                 fig.savefig(p, dpi=150)
@@ -648,10 +671,12 @@ def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap
                     um = UMAP(n_components=2, random_state=42)
                     Xu = um.fit_transform(Xp)
                     fig, ax = plt.subplots(figsize=(6,5))
+                    if y is None:
+                        y = _pseudo_labels_for_visualization(X)
                     if y is not None:
-                        sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
+                        sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y, palette='tab10', s=10, ax=ax, legend=False)
                     else:
-                        ax.scatter(Xu[:,0], Xu[:,1], s=10)
+                        ax.scatter(Xu[:,0], Xu[:,1], s=10, c='C1')
                     ax.set_title(f"{lang} - Dual Ant UMAP")
                     p = out_plots_dir / f"{lang}_dual_ant_umap.png"
                     fig.savefig(p, dpi=150)
