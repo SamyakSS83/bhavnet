@@ -8,10 +8,10 @@ languages=("german" "french" "spanish" "italian" "portuguese" "dutch" "russian")
 # Function to train a single language
 train_language() {
     local lang=$1
-    local logfile="../logs/bert_${lang}_$(date +%Y%m%d_%H%M%S).log"
+    local logfile="/home/samyak/scratch/temp/multilingual_antonym_detection/logs/bert_${lang}_$(date +%Y%m%d_%H%M%S).log"
     
     # Create logs directory if it doesn't exist
-    mkdir -p ../logs
+    mkdir -p /home/samyak/scratch/temp/multilingual_antonym_detection/logs
     
     echo ""
     echo "==============================================="
@@ -23,7 +23,7 @@ train_language() {
     python3 train_models.py --language $lang --model-type bert --epochs 12 > "$logfile" 2>&1
     
     # Check if training was successful by looking for the model file
-    if [ -f "../models/trained/bert/best_${lang}_bert_model.pt" ]; then
+    if [ -f "/home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/bert/best_${lang}_bert_model.pt" ]; then
         echo "✓ Successfully trained $lang BERT model"
         echo "✓ Log saved to: $logfile"
     else
@@ -68,8 +68,8 @@ echo "==============================================="
 echo "Training Summary"
 echo "==============================================="
 echo "Trained models:"
-ls -la ../models/trained/bert/
+ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/bert/
 
 echo ""
 echo "Log files created:"
-ls -la ../logs/bert_*.log 2>/dev/null || echo "No BERT log files found"
+ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/logs/bert_*.log 2>/dev/null || echo "No BERT log files found"

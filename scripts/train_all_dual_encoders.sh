@@ -8,10 +8,10 @@ languages=("german" "french" "spanish" "italian" "portuguese" "dutch" "russian")
 # Function to train a single language
 train_language() {
     local lang=$1
-    local logfile="../logs/dual_encoder_${lang}_$(date +%Y%m%d_%H%M%S).log"
+    local logfile="/home/samyak/scratch/temp/multilingual_antonym_detection/logs/dual_encoder_${lang}_$(date +%Y%m%d_%H%M%S).log"
     
     # Create logs directory if it doesn't exist
-    mkdir -p ../logs
+    mkdir -p /home/samyak/scratch/temp/multilingual_antonym_detection/logs
     
     echo ""
     echo "==============================================="
@@ -23,7 +23,7 @@ train_language() {
     python3 train_models.py --language $lang --model-type dual_encoder --dual-encoder-epochs 20 > "$logfile" 2>&1
     
     # Check if training was successful by looking for the model file
-    if [ -f "../models/trained/dual_encoder/best_${lang}_dual_encoder_model.pt" ]; then
+    if [ -f "/home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/dual_encoder/best_${lang}_dual_encoder_model.pt" ]; then
         echo "✓ Successfully trained $lang Dual Encoder model"
         echo "✓ Log saved to: $logfile"
     else
@@ -68,18 +68,18 @@ echo "==============================================="
 echo "Training Summary"
 echo "==============================================="
 echo "Trained dual encoder models:"
-ls -la ../models/trained/dual_encoder/
+ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/dual_encoder/
 
 echo ""
 echo "All models summary:"
 echo "BERT models:"
-ls -la ../models/trained/bert/ 2>/dev/null || echo "No BERT models found"
+ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/bert/ 2>/dev/null || echo "No BERT models found"
 echo "Dual Encoder models:"
-ls -la ../models/trained/dual_encoder/ 2>/dev/null || echo "No Dual Encoder models found"
+ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/dual_encoder/ 2>/dev/null || echo "No Dual Encoder models found"
 
 echo ""
 echo "Log files created:"
 echo "BERT logs:"
-ls -la ../logs/bert_*.log 2>/dev/null || echo "No BERT log files found"
+ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/logs/bert_*.log 2>/dev/null || echo "No BERT log files found"
 echo "Dual Encoder logs:"
-ls -la ../logs/dual_encoder_*.log 2>/dev/null || echo "No Dual Encoder log files found"
+ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/logs/dual_encoder_*.log 2>/dev/null || echo "No Dual Encoder log files found"

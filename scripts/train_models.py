@@ -34,12 +34,12 @@ class MultilingualTrainingSystem:
         """Load training configuration."""
         default_config = {
             'datasets': {
-                'base_dir': '../datasets',
+                'base_dir': '/home/samyak/scratch/temp/multilingual_antonym_detection/datasets',
                 'languages': ['german', 'french', 'spanish', 'italian', 'portuguese', 'dutch', 'russian']
             },
             'models': {
-                'bert_dir': '../models/bert',
-                'output_dir': '../models/trained',
+                'bert_dir': '/home/samyak/scratch/temp/multilingual_antonym_detection/models/bert',
+                'output_dir': '/home/samyak/scratch/temp/multilingual_antonym_detection/models/trained',
                 'model_types': ['bert', 'dual_encoder']
             },
             'training': {
@@ -457,7 +457,7 @@ class MultilingualTrainingSystem:
 
 def main():
     parser = argparse.ArgumentParser(description='Train multilingual antonym detection models')
-    parser.add_argument('--config', default='../config/training_config.yaml', help='Training configuration file')
+    parser.add_argument('--config', default='/home/samyak/scratch/temp/multilingual_antonym_detection/config/training_config.yaml', help='Training configuration file')
     parser.add_argument('--language', help='Train specific language only')
     parser.add_argument('--model-type', choices=['bert', 'dual_encoder'], help='Train specific model type only')
     parser.add_argument('--check-only', action='store_true', help='Only check prerequisites')

@@ -8,10 +8,10 @@ echo "Starting time: $(date)"
 echo ""
 
 # Create logs directory if it doesn't exist
-mkdir -p ../logs
+mkdir -p /home/samyak/scratch/temp/multilingual_antonym_detection/logs
 
 # Log file for the master script
-MASTER_LOG="../logs/master_training_$(date +%Y%m%d_%H%M%S).log"
+MASTER_LOG="/home/samyak/scratch/temp/multilingual_antonym_detection/logs/master_training_$(date +%Y%m%d_%H%M%S).log"
 echo "Master log file: $MASTER_LOG"
 
 # Function to log and display messages
@@ -79,16 +79,16 @@ log_message "TRAINED MODELS SUMMARY"
 log_message "========================================================="
 
 log_message "BERT Models:"
-if ls ../models/trained/bert/*.pt >/dev/null 2>&1; then
-    ls -la ../models/trained/bert/*.pt | tee -a "$MASTER_LOG"
+if ls /home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/bert/*.pt >/dev/null 2>&1; then
+    ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/bert/*.pt | tee -a "$MASTER_LOG"
 else
     log_message "No BERT models found"
 fi
 
 log_message ""
 log_message "Dual Encoder Models:"
-if ls ../models/trained/dual_encoder/*.pt >/dev/null 2>&1; then
-    ls -la ../models/trained/dual_encoder/*.pt | tee -a "$MASTER_LOG"
+if ls /home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/dual_encoder/*.pt >/dev/null 2>&1; then
+    ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/dual_encoder/*.pt | tee -a "$MASTER_LOG"
 else
     log_message "No Dual Encoder models found"
 fi
@@ -101,16 +101,16 @@ log_message "========================================================="
 log_message "Master log: $MASTER_LOG"
 log_message ""
 log_message "BERT training logs:"
-if ls ../logs/bert_*.log >/dev/null 2>&1; then
-    ls -la ../logs/bert_*.log | tee -a "$MASTER_LOG"
+if ls /home/samyak/scratch/temp/multilingual_antonym_detection/logs/bert_*.log >/dev/null 2>&1; then
+    ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/logs/bert_*.log | tee -a "$MASTER_LOG"
 else
     log_message "No BERT log files found"
 fi
 
 log_message ""
 log_message "Dual Encoder training logs:"
-if ls ../logs/dual_encoder_*.log >/dev/null 2>&1; then
-    ls -la ../logs/dual_encoder_*.log | tee -a "$MASTER_LOG"
+if ls /home/samyak/scratch/temp/multilingual_antonym_detection/logs/dual_encoder_*.log >/dev/null 2>&1; then
+    ls -la /home/samyak/scratch/temp/multilingual_antonym_detection/logs/dual_encoder_*.log | tee -a "$MASTER_LOG"
 else
     log_message "No Dual Encoder log files found"
 fi
@@ -134,8 +134,8 @@ print(' '.join(cfg['languages'].keys()))
 PY
 ); do
     (
-        python3 scripts/analysis.py --config config/language_config.yaml --languages $lang --baseline mbert 2>&1 | tee -a ../logs/analysis_${lang}_mbert.log &
-        python3 scripts/analysis.py --config config/language_config.yaml --languages $lang --baseline xlmr 2>&1 | tee -a ../logs/analysis_${lang}_xlmr.log &
+        python3 scripts/analysis.py --config config/language_config.yaml --languages $lang --baseline mbert 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/analysis_${lang}_mbert.log &
+        python3 scripts/analysis.py --config config/language_config.yaml --languages $lang --baseline xlmr 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/analysis_${lang}_xlmr.log &
     )
 done
 wait
@@ -148,7 +148,7 @@ print(list(cfg['languages'].keys())[0])
 PY
 )
 log_message "Launching ablation runs for $FIRST_LANG"
-python3 scripts/analysis.py --config config/language_config.yaml --ablation --languages $FIRST_LANG 2>&1 | tee -a ../logs/ablation_${FIRST_LANG}.log
+python3 scripts/analysis.py --config config/language_config.yaml --ablation --languages $FIRST_LANG 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/ablation_${FIRST_LANG}.log
 
 log_message ""
 log_message "========================================================="
