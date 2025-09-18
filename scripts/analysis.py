@@ -51,8 +51,7 @@ class Analyzer:
 
     def evaluate_bert(self, language, model_path, tokenizer_name):
         logger.info(f"Evaluating BERT for {language}")
-        data_path = self.data_root / language / 'test.txt'
-        df = self._read_pairs(data_path)
+        df = self.get_pairs_df(language, split='test')
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         model = AutoModel.from_pretrained(tokenizer_name)
         model.eval()
@@ -78,8 +77,7 @@ class Analyzer:
     def evaluate_dual_encoder(self, language, model_path, bert_model_name):
         # Load model - requires the trained dual encoder class; here we only load embeddings by running BERT base
         logger.info(f"Collecting Dual-Encoder embeddings for {language}")
-        data_path = self.data_root / language / 'test.txt'
-        df = self._read_pairs(data_path)
+        df = self.get_pairs_df(language, split='test')
         tokenizer = AutoTokenizer.from_pretrained(bert_model_name)
         model = AutoModel.from_pretrained(bert_model_name)
         model.eval()
@@ -106,14 +104,13 @@ class Analyzer:
         Saves predictions and metrics to assets/analysis/<language>/baseline_*."""
         logger.info(f"Running baseline probe for {language} using {bert_model_name}")
         # Load train and test pairs
-        train_path = self.data_root / language / 'train.txt'
-        test_path = self.data_root / language / 'test.txt'
-        if not train_path.exists() or not test_path.exists():
+        # Use helper which supports multiple dataset layouts (datasets/<lang>/ or combined dataset/ files)
+        try:
+            train_df = self.get_pairs_df(language, split='train')
+            test_df = self.get_pairs_df(language, split='test')
+        except FileNotFoundError:
             logger.warning(f"Train/test files missing for {language}")
             return None
-
-        train_df = self._read_pairs(train_path)
-        test_df = self._read_pairs(test_path)
 
         # Encode with BERT
         tokenizer = AutoTokenizer.from_pretrained(bert_model_name)
@@ -163,14 +160,13 @@ class Analyzer:
         Saves per-layer reports and a comparison plot.
         """
         logger.info(f"Running layer-wise probe for {language} on layers {layers}")
-        train_path = self.data_root / language / 'train.txt'
-        test_path = self.data_root / language / 'test.txt'
-        if not train_path.exists() or not test_path.exists():
+        try:
+            train_df = self.get_pairs_df(language, split='train')
+            test_df = self.get_pairs_df(language, split='test')
+        except FileNotFoundError:
             logger.warning("Missing train/test for layerwise probe")
             return
 
-        train_df = self._read_pairs(train_path)
-        test_df = self._read_pairs(test_path)
 
         tokenizer = AutoTokenizer.from_pretrained(bert_model_name)
         model = AutoModel.from_pretrained(bert_model_name, output_hidden_states=True)
@@ -464,6 +460,57 @@ class Analyzer:
                     data['word2'].append(p[1])
                     data['label'].append(int(p[2]))
         return pd.DataFrame(data)
+
+    def get_pairs_df(self, language: str, split: str = 'test') -> pd.DataFrame:
+        """Resolve and load pair files for a language and split.
+        Tries these locations in order:
+         1) data_root / <language> / <split>.txt
+         2) project_root / 'dataset' / *.<split> (combines adjective/noun/verb files)
+        Raises FileNotFoundError if no files found.
+        """
+        # 1) datasets/<language>/<split>.txt
+        p1 = self.data_root / language / f"{split}.txt"
+        if p1.exists():
+            logger.info(f"Found {split} for {language} at {p1}")
+            return self._read_pairs(p1)
+
+        # 2) top-level 'dataset' folder (legacy English layout)
+        project_root = Path(__file__).resolve().parents[1]
+        legacy_dir = project_root / 'dataset'
+        if legacy_dir.exists() and legacy_dir.is_dir():
+            # collect files ending with .{split} (e.g., adjective-pairs.test)
+            candidates = sorted([p for p in legacy_dir.iterdir() if p.is_file() and p.name.endswith(f'.{split}') or p.name.endswith(f'-{split}') or p.name.endswith(f'.{split}.txt')])
+            # Some files are named like adjective-pairs.test or adjective-pairs.test.txt
+            if not candidates:
+                # try explicit patterns
+                for stem in ['adjective-pairs', 'noun-pairs', 'verb-pairs', 'combined_antonyms', 'test']:
+                    for ext in [f'.{split}', f'.{split}.txt', f'-pairs.{split}']:
+                        p = legacy_dir / (stem + ext)
+                        if p.exists():
+                            candidates.append(p)
+            if candidates:
+                dfs = []
+                for c in candidates:
+                    try:
+                        dfs.append(self._read_pairs(c))
+                        logger.info(f"Loaded legacy split file {c} for {language}")
+                    except Exception as e:
+                        logger.warning(f"Failed to read legacy split {c}: {e}")
+                if dfs:
+                    combined = pd.concat(dfs, ignore_index=True)
+                    return combined
+
+        # 3) try datasets/<language> with alternative filenames (e.g., test.txt without language folder)
+        alt = self.data_root / language
+        if alt.exists() and alt.is_dir():
+            # attempt to find any file that looks like the split
+            for p in alt.glob(f'*{split}*'):
+                try:
+                    return self._read_pairs(p)
+                except Exception:
+                    continue
+
+        raise FileNotFoundError(f'No {split} data found for language {language} in {self.data_root} or legacy dataset dir')
 
 
 if __name__ == '__main__':
