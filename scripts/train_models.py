@@ -35,7 +35,7 @@ class MultilingualTrainingSystem:
         default_config = {
             'datasets': {
                 'base_dir': '/home/samyak/scratch/temp/multilingual_antonym_detection/datasets',
-                'languages': ['german', 'french', 'spanish', 'italian', 'portuguese', 'dutch', 'russian']
+                'languages': ['german', 'french', 'spanish', 'italian', 'portuguese', 'dutch', 'russian', 'english']
             },
             'models': {
                 'bert_dir': '/home/samyak/scratch/temp/multilingual_antonym_detection/models/bert',
