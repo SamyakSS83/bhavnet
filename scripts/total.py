@@ -454,8 +454,194 @@ def collect_per_language_plots(languages=None):
                             break
                         if key in found:
                             break
+        # If some plots missing, try to generate them from embeddings into assets/analysis/<lang>/plots
+        missing_keys = [k for k in ['bert_tsne','bert_umap','dual_syn_tsne','dual_syn_umap','dual_ant_tsne','dual_ant_umap'] if k not in found]
+        if missing_keys:
+            gen_dir = ASSETS_ANALYSIS / lang / 'plots'
+            gen = _generate_plots_from_embeddings(lang, gen_dir)
+            for k, v in gen.items():
+                if k not in found:
+                    found[k] = v
         out[lang] = found
     return out
+
+
+def _generate_plots_from_embeddings(lang: str, out_plots_dir: Path, per_lang_cap: int = 1000):
+    """Try to generate TSNE/UMAP plots from saved .npy embeddings for a language.
+
+    Saves plots under out_plots_dir (creates dir). Returns dict of generated plot paths.
+    """
+    generated = {}
+    out_plots_dir.mkdir(parents=True, exist_ok=True)
+    bert_emb_root = PROJECT_ROOT / 'models' / 'trained' / 'bert' / 'analysis' / 'embeddings'
+    dual_emb_root = PROJECT_ROOT / 'models' / 'trained' / 'dual_encoder' / 'analysis' / 'embeddings'
+
+    # BERT CLS embeddings
+    bert_file = bert_emb_root / f"{lang}_bert_cls_embeddings.npy"
+    bert_labels = bert_emb_root / f"{lang}_bert_labels.npy"
+    if bert_file.exists():
+        try:
+            embs = np.load(bert_file)
+            labels = np.load(bert_labels) if bert_labels.exists() else None
+            n = embs.shape[0]
+            cap = min(per_lang_cap, n)
+            idx = np.random.RandomState(42).choice(n, cap, replace=False) if n > cap else np.arange(n)
+            X = embs[idx]
+            y = labels[idx] if (labels is not None and len(labels) > 0) else None
+
+            # PCA preproj
+            try:
+                pca = PCA(n_components=min(50, X.shape[1]))
+                Xp = pca.fit_transform(X)
+            except Exception:
+                Xp = X
+
+            # t-SNE
+            try:
+                ts = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+                Xt = ts.fit_transform(Xp)
+                fig, ax = plt.subplots(figsize=(6,5))
+                if y is not None:
+                    sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
+                else:
+                    ax.scatter(Xt[:,0], Xt[:,1], s=10)
+                ax.set_title(f"{lang} - BERT CLS t-SNE")
+                p = out_plots_dir / f"{lang}_bert_tsne.png"
+                fig.savefig(p, dpi=150)
+                plt.close(fig)
+                generated['bert_tsne'] = p
+            except Exception as e:
+                logger.warning(f"Failed to compute per-language t-SNE for {lang}: {e}")
+
+            # UMAP
+            if UMAP is not None:
+                try:
+                    um = UMAP(n_components=2, random_state=42)
+                    Xu = um.fit_transform(Xp)
+                    fig, ax = plt.subplots(figsize=(6,5))
+                    if y is not None:
+                        sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
+                    else:
+                        ax.scatter(Xu[:,0], Xu[:,1], s=10)
+                    ax.set_title(f"{lang} - BERT CLS UMAP")
+                    p = out_plots_dir / f"{lang}_bert_umap.png"
+                    fig.savefig(p, dpi=150)
+                    plt.close(fig)
+                    generated['bert_umap'] = p
+                except Exception as e:
+                    logger.warning(f"Failed to compute per-language UMAP for {lang}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Failed to load BERT embeddings for {lang}: {e}")
+
+    # Dual syn/ant embeddings
+    dual_syn_file = dual_emb_root / f"{lang}_dual_syn_embeddings.npy"
+    dual_ant_file = dual_emb_root / f"{lang}_dual_ant_embeddings.npy"
+    dual_labels = dual_emb_root / f"{lang}_labels.npy"
+
+    if dual_syn_file.exists():
+        try:
+            embs = np.load(dual_syn_file)
+            n = embs.shape[0]
+            cap = min(per_lang_cap, n)
+            idx = np.random.RandomState(42).choice(n, cap, replace=False) if n > cap else np.arange(n)
+            X = embs[idx]
+            y = np.load(dual_labels)[idx] if dual_labels.exists() else None
+
+            try:
+                pca = PCA(n_components=min(50, X.shape[1]))
+                Xp = pca.fit_transform(X)
+            except Exception:
+                Xp = X
+
+            try:
+                ts = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+                Xt = ts.fit_transform(Xp)
+                fig, ax = plt.subplots(figsize=(6,5))
+                if y is not None:
+                    sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
+                else:
+                    ax.scatter(Xt[:,0], Xt[:,1], s=10)
+                ax.set_title(f"{lang} - Dual Syn t-SNE")
+                p = out_plots_dir / f"{lang}_dual_syn_tsne.png"
+                fig.savefig(p, dpi=150)
+                plt.close(fig)
+                generated['dual_syn_tsne'] = p
+            except Exception as e:
+                logger.warning(f"Failed to compute dual syn t-SNE for {lang}: {e}")
+
+            if UMAP is not None:
+                try:
+                    um = UMAP(n_components=2, random_state=42)
+                    Xu = um.fit_transform(Xp)
+                    fig, ax = plt.subplots(figsize=(6,5))
+                    if y is not None:
+                        sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
+                    else:
+                        ax.scatter(Xu[:,0], Xu[:,1], s=10)
+                    ax.set_title(f"{lang} - Dual Syn UMAP")
+                    p = out_plots_dir / f"{lang}_dual_syn_umap.png"
+                    fig.savefig(p, dpi=150)
+                    plt.close(fig)
+                    generated['dual_syn_umap'] = p
+                except Exception as e:
+                    logger.warning(f"Failed to compute dual syn UMAP for {lang}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Failed to load dual syn embeddings for {lang}: {e}")
+
+    if dual_ant_file.exists():
+        try:
+            embs = np.load(dual_ant_file)
+            n = embs.shape[0]
+            cap = min(per_lang_cap, n)
+            idx = np.random.RandomState(42).choice(n, cap, replace=False) if n > cap else np.arange(n)
+            X = embs[idx]
+            y = np.load(dual_labels)[idx] if dual_labels.exists() else None
+
+            try:
+                pca = PCA(n_components=min(50, X.shape[1]))
+                Xp = pca.fit_transform(X)
+            except Exception:
+                Xp = X
+
+            try:
+                ts = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+                Xt = ts.fit_transform(Xp)
+                fig, ax = plt.subplots(figsize=(6,5))
+                if y is not None:
+                    sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
+                else:
+                    ax.scatter(Xt[:,0], Xt[:,1], s=10)
+                ax.set_title(f"{lang} - Dual Ant t-SNE")
+                p = out_plots_dir / f"{lang}_dual_ant_tsne.png"
+                fig.savefig(p, dpi=150)
+                plt.close(fig)
+                generated['dual_ant_tsne'] = p
+            except Exception as e:
+                logger.warning(f"Failed to compute dual ant t-SNE for {lang}: {e}")
+
+            if UMAP is not None:
+                try:
+                    um = UMAP(n_components=2, random_state=42)
+                    Xu = um.fit_transform(Xp)
+                    fig, ax = plt.subplots(figsize=(6,5))
+                    if y is not None:
+                        sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y, palette='coolwarm', s=10, ax=ax, legend=False)
+                    else:
+                        ax.scatter(Xu[:,0], Xu[:,1], s=10)
+                    ax.set_title(f"{lang} - Dual Ant UMAP")
+                    p = out_plots_dir / f"{lang}_dual_ant_umap.png"
+                    fig.savefig(p, dpi=150)
+                    plt.close(fig)
+                    generated['dual_ant_umap'] = p
+                except Exception as e:
+                    logger.warning(f"Failed to compute dual ant UMAP for {lang}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Failed to load dual ant embeddings for {lang}: {e}")
+
+    return generated
 
 
 def plot_individual_and_grid(plot_map: dict, out_dir: Path):
@@ -495,8 +681,8 @@ def plot_individual_and_grid(plot_map: dict, out_dir: Path):
 
     # Create grid figure
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 3*n_rows))
-    if n_rows == 1:
-        axes = np.expand_dims(axes, 0)
+    # Ensure axes is a 2D array for consistent indexing
+    axes = np.atleast_2d(axes)
     for i, lang in enumerate(langs):
         pm = plot_map[lang]
         for j, key in enumerate(plot_keys):
@@ -506,7 +692,10 @@ def plot_individual_and_grid(plot_map: dict, out_dir: Path):
             if p and p.exists():
                 try:
                     img = mpimg.imread(p)
-                    ax.imshow(img)
+                    # Force the image to fill the subplot area to avoid tiny thumbnails
+                    ax.imshow(img, aspect='auto', extent=[0, 1, 0, 1])
+                    ax.set_xlim(0, 1)
+                    ax.set_ylim(0, 1)
                     ax.set_title(f"{lang} - {key}", fontsize=8)
                     ax.axis('off')
                 except Exception:
