@@ -38,6 +38,9 @@ TRAINED_DUAL_ANALYSIS = Path('/home/scratch/samyak/temp/multilingual_antonym_det
 OUT_CSV = ASSETS_ANALYSIS / 'final_summary.csv'
 OUT_PNG = ASSETS_ANALYSIS / 'final_summary.png'
 
+# Default ordered languages for grids (8 languages)
+DEFAULT_LANGS = ['english', 'dutch', 'french', 'italian', 'russian', 'spanish', 'portuguese', 'german']
+
 # Log paths for diagnostics
 logger.info(f'Using PROJECT_ROOT={PROJECT_ROOT}')
 logger.info(f'ASSETS_ANALYSIS={ASSETS_ANALYSIS}')
@@ -729,6 +732,65 @@ def plot_individual_and_grid(plot_map: dict, out_dir: Path):
     logger.info(f"Saved per-language grid of TSNE/UMAP plots to {grid_path}")
 
 
+def plot_selected_grids(plot_map: dict, out_dir: Path, languages: list):
+    """Create four 3x3 grids (TSNE bert, TSNE dual, UMAP bert, UMAP dual).
+
+    languages: list of 8 languages in desired order. The grid is 3x3: the first 8 cells
+    are the languages in order row-major, and the 9th cell is an index listing the languages.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    import matplotlib.image as mpimg
+
+    # Define mapping from grid name to plot_key in plot_map
+    grids = {
+        'tsne_bert': 'bert_tsne',
+        'tsne_dual': 'dual_syn_tsne',
+        'umap_bert': 'bert_umap',
+        'umap_dual': 'dual_syn_umap'
+    }
+
+    # enforce exactly 8 languages
+    langs = list(languages)[:8]
+    while len(langs) < 8:
+        langs.append('missing')
+
+    for grid_name, key in grids.items():
+        fig, axes = plt.subplots(3, 3, figsize=(3*3, 3*3))
+        axes = axes.reshape(3, 3)
+        # iterate over first 8 cells
+        for idx in range(9):
+            r = idx // 3
+            c = idx % 3
+            ax = axes[r, c]
+            ax.axis('off')
+            if idx < 8:
+                lang = langs[idx]
+                pm = plot_map.get(lang, {})
+                p = pm.get(key)
+                if p and p.exists():
+                    try:
+                        img = mpimg.imread(p)
+                        ax.imshow(img, aspect='auto', extent=[0,1,0,1])
+                        ax.set_xlim(0,1)
+                        ax.set_ylim(0,1)
+                        ax.set_title(f"{lang}", fontsize=9)
+                        ax.axis('off')
+                    except Exception:
+                        ax.text(0.5, 0.5, 'failed to load', ha='center')
+                else:
+                    ax.text(0.5, 0.5, 'missing', ha='center')
+            else:
+                # 9th cell: index/legend
+                txt = '\n'.join([f"{i+1}. {l}" for i, l in enumerate(langs)])
+                ax.text(0.02, 0.98, txt, va='top', ha='left', fontsize=10)
+
+        plt.tight_layout()
+        outp = out_dir / f'grid_{grid_name}.png'
+        fig.savefig(outp, dpi=150)
+        plt.close(fig)
+        logger.info(f"Saved grid {grid_name} to {outp}")
+
+
 def _build_focused_grids(plot_map: dict, out_dir: Path):
     """Build four focused grids: BERT t-SNE, Dual t-SNE, BERT UMAP, Dual UMAP.
 
@@ -811,10 +873,19 @@ if __name__ == '__main__':
     if args.grid:
         out_dir = ASSETS_ANALYSIS / 'combined_embeddings'
         logger.info('Collecting per-language TSNE/UMAP plots and building grid...')
-        plot_map = collect_per_language_plots(args.languages)
-        plot_individual_and_grid(plot_map, out_dir)
-        # Also build focused grids: bert tsne, dual tsne, bert umap, dual umap
+        # Use only the explicit language list to avoid noise from other folders
+        languages_list = args.languages if args.languages else DEFAULT_LANGS
+        # Ensure lower-case language names and preserve order
+        languages_list = [l.lower() for l in languages_list]
+        plot_map = collect_per_language_plots(languages_list)
+        # Save individual copies and a full table-grid for the requested languages
         try:
-            _build_focused_grids(plot_map, out_dir)
+            plot_individual_and_grid(plot_map, out_dir)
         except Exception as e:
-            logger.warning(f'Failed to build focused grids: {e}')
+            logger.warning(f'plot_individual_and_grid failed: {e}')
+
+        # Create the four requested 3x3 grids (t-SNE bert, t-SNE dual, UMAP bert, UMAP dual)
+        try:
+            plot_selected_grids(plot_map, out_dir, languages_list)
+        except Exception as e:
+            logger.warning(f'plot_selected_grids failed: {e}')
