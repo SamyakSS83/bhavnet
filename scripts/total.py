@@ -941,6 +941,126 @@ def plot_selected_grids(plot_map: dict, out_dir: Path, languages: list):
         plt.close(fig)
         logger.info(f"Saved grid {grid_name} to {outp}")
 
+    # Always create two common grids for dual spaces: synonym and antonym
+    for space in ['syn', 'ant']:
+        coords = {}
+        has_any = False
+        for lang in langs:
+            coords[lang] = None
+            embf = PROJECT_ROOT / 'models' / 'trained' / 'dual_encoder' / 'analysis' / 'embeddings' / f"{lang}_dual_{space}_embeddings.npy"
+            labf = PROJECT_ROOT / 'models' / 'trained' / 'dual_encoder' / 'analysis' / 'embeddings' / f"{lang}_labels.npy"
+            if embf.exists():
+                try:
+                    embs = np.load(embf)
+                    n = embs.shape[0]
+                    cap = min(1000, n)
+                    idx = np.random.RandomState(42).choice(n, cap, replace=False) if n > cap else np.arange(n)
+                    X = embs[idx]
+                    labs = None
+                    if labf.exists():
+                        try:
+                            lab_all = np.load(labf)
+                            if lab_all.shape[0] >= n:
+                                labs = lab_all[idx]
+                        except Exception:
+                            labs = None
+                    try:
+                        pca = PCA(n_components=min(50, X.shape[1]))
+                        Xp = pca.fit_transform(X)
+                    except Exception:
+                        Xp = X
+                    try:
+                        ts = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+                        X2 = ts.fit_transform(Xp)
+                    except Exception as e:
+                        logger.warning(f"t-SNE failed for {lang} in common grid dual_{space}: {e}")
+                        X2 = None
+                    if X2 is not None:
+                        # if labels missing create pseudo-labels for visualization
+                        if labs is None:
+                            try:
+                                labs = _pseudo_labels_for_visualization(X)
+                            except Exception:
+                                labs = None
+                        coords[lang] = (X2, labs)
+                        has_any = True
+                except Exception as e:
+                    logger.warning(f"Failed to load embeddings for common grid dual_{space} lang {lang}: {e}")
+
+        fig, axes = plt.subplots(3, 3, figsize=(9,9))
+        axes = axes.reshape(3, 3)
+        if has_any:
+            xs = []
+            ys = []
+            for lang in langs:
+                v = coords.get(lang)
+                if v is None:
+                    continue
+                X2, _ = v
+                xs.append(X2[:,0])
+                ys.append(X2[:,1])
+            if xs:
+                allx = np.concatenate(xs)
+                ally = np.concatenate(ys)
+                xmin, xmax = np.percentile(allx, [1,99])
+                ymin, ymax = np.percentile(ally, [1,99])
+            else:
+                xmin, xmax, ymin, ymax = -1, 1, -1, 1
+
+            for idx in range(9):
+                r = idx // 3
+                c = idx % 3
+                ax = axes[r, c]
+                ax.axis('off')
+                if idx < 8:
+                    lang = langs[idx]
+                    v = coords.get(lang)
+                    if v is None:
+                        ax.text(0.5, 0.5, 'missing', ha='center')
+                    else:
+                        X2, labs = v
+                        ax.scatter(X2[:,0], X2[:,1], c=(labs if labs is not None else 'C0'), s=8)
+                        ax.set_xlim(xmin, xmax)
+                        ax.set_ylim(ymin, ymax)
+                        ax.set_title(lang, fontsize=9)
+                        ax.axis('off')
+                else:
+                    txt = '\n'.join([f"{i+1}. {l}" for i, l in enumerate(langs)])
+                    ax.text(0.02, 0.98, txt, va='top', ha='left', fontsize=10)
+        else:
+            # fallback to PNGs found in plot_map
+            for idx in range(9):
+                r = idx // 3
+                c = idx % 3
+                ax = axes[r, c]
+                ax.axis('off')
+                if idx < 8:
+                    lang = langs[idx]
+                    pm = plot_map.get(lang, {})
+                    key_name = 'dual_syn_tsne' if space == 'syn' else 'dual_ant_tsne'
+                    p = pm.get(key_name)
+                    if p and p.exists():
+                        try:
+                            img = mpimg.imread(p)
+                            ax.imshow(img, aspect='auto', extent=[0,1,0,1])
+                            ax.set_xlim(0,1)
+                            ax.set_ylim(0,1)
+                            ax.set_title(f"{lang}", fontsize=9)
+                            ax.axis('off')
+                        except Exception:
+                            ax.text(0.5, 0.5, 'failed to load', ha='center')
+                    else:
+                        ax.text(0.5, 0.5, 'missing', ha='center')
+                else:
+                    txt = '\n'.join([f"{i+1}. {l}" for i, l in enumerate(langs)])
+                    ax.text(0.02, 0.98, txt, va='top', ha='left', fontsize=10)
+
+        plt.tight_layout()
+        outp = out_dir / f'grid_common_{space}.png'
+        fig.savefig(outp, dpi=150)
+        plt.close(fig)
+        logger.info(f"Saved common grid for dual_{space} to {outp}")
+
 
 def _build_focused_grids(plot_map: dict, out_dir: Path):
     """Build four focused grids: BERT t-SNE, Dual t-SNE, BERT UMAP, Dual UMAP.
