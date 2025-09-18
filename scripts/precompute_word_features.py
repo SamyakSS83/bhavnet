@@ -58,8 +58,25 @@ def extract_word_features(
     ft_model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=2)
     if trained_checkpoint and trained_checkpoint.exists():
         logger.info(f"Loading fine-tuned checkpoint from {trained_checkpoint}")
-        sd = torch.load(trained_checkpoint, map_location="cpu")
-        ft_model.load_state_dict(sd, strict=False)
+        try:
+            sd = torch.load(trained_checkpoint, map_location="cpu")
+            model_sd = ft_model.state_dict()
+            compat = {}
+            skipped = []
+            for k, v in sd.items():
+                if k in model_sd and hasattr(model_sd[k], 'shape') and hasattr(v, 'shape') and tuple(v.shape) == tuple(model_sd[k].shape):
+                    compat[k] = v
+                elif k in model_sd:
+                    skipped.append(k)
+            if not compat:
+                logger.warning("Checkpoint is incompatible with the provided model_name; proceeding with base pretrained weights.")
+            else:
+                if any('embeddings.word_embeddings.weight' in k for k in skipped):
+                    logger.warning("Tokenizer/base mismatch detected: embedding table shapes differ. Use a model_name that matches the checkpoint's base (e.g., the same multilingual/german variant used for fine-tuning). Using base model embeddings and loading other compatible layers.")
+                ft_model.load_state_dict(compat, strict=False)
+                logger.info(f"Loaded {len(compat)}/{len(sd)} keys from checkpoint; skipped {len(skipped)} mismatched keys.")
+        except Exception as e:
+            logger.warning(f"Failed to load checkpoint; continuing with base weights. Error: {e}")
     base = None
     for attr in ("base_model", "bert", "roberta", "distilbert", "transformer", "model"):
         if hasattr(ft_model, attr):
