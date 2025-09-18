@@ -19,6 +19,9 @@ import seaborn as sns
 import argparse
 import logging
 import json
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+from umap import UMAP
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('total')
@@ -148,6 +151,193 @@ def aggregate(languages=None):
         logger.warning(f"Failed to create comparison plot: {e}")
 
     return df
+
+
+def _collect_embeddings(root: Path, pattern: str):
+    """Collect embeddings matching pattern under root/embeddings.
+    Returns list of (lang, embeddings, labels)"""
+    out = []
+    emb_root = root / 'embeddings'
+    if not emb_root.exists():
+        return out
+    for f in sorted(emb_root.glob(pattern)):
+        name = f.name
+        # infer language from filename: e.g., german_bert_cls_embeddings.npy -> german
+        lang = name.split('_')[0]
+        try:
+            embs = np.load(f)
+        except Exception:
+            continue
+        # try to find labels file
+        # possible labels names: {lang}_bert_labels.npy or {lang}_labels.npy
+        labels = None
+        for lab_pattern in [f"{lang}_bert_labels.npy", f"{lang}_labels.npy", f"{lang}_bert_labels.npy"]:
+            labf = emb_root / lab_pattern
+            if labf.exists():
+                try:
+                    labels = np.load(labf)
+                except Exception:
+                    labels = None
+                break
+        out.append((lang, embs, labels))
+    return out
+
+
+def plot_combined_embeddings(project_root: Path, out_dir: Path, max_points=5000, per_lang_cap=1000):
+    """Create combined t-SNE and UMAP plots for BERT CLS and Dual syn/ant embeddings.
+    Writes PNGs into out_dir.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    bert_root = project_root / 'models' / 'trained' / 'bert' / 'analysis'
+    dual_root = project_root / 'models' / 'trained' / 'dual_encoder' / 'analysis'
+
+    # Collect bert cls embeddings
+    bert_embs = _collect_embeddings(bert_root, '*_bert_cls_embeddings.npy')
+    if bert_embs:
+        # assemble arrays and labels
+        X_parts = []
+        y_lang = []
+        y_label = []
+        for lang, embs, labels in bert_embs:
+            if embs is None:
+                continue
+            n = embs.shape[0]
+            cap = min(per_lang_cap, n)
+            if n > cap:
+                idx = np.random.RandomState(42).choice(n, cap, replace=False)
+                embs_s = embs[idx]
+                labs_s = labels[idx] if labels is not None else np.full(len(idx), -1)
+            else:
+                embs_s = embs
+                labs_s = labels if labels is not None else np.full(n, -1)
+            X_parts.append(embs_s)
+            y_lang += [lang] * embs_s.shape[0]
+            y_label += [int(l) if (labs_s is not None and len(labs_s)>0) else -1 for l in labs_s]
+
+        if X_parts:
+            X = np.vstack(X_parts)
+            # optional PCA prior to TSNE for speed
+            try:
+                pca = PCA(n_components=min(50, X.shape[1]))
+                Xp = pca.fit_transform(X)
+            except Exception:
+                Xp = X
+
+            # t-SNE
+            try:
+                ts = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+                Xt = ts.fit_transform(Xp)
+                plt.figure(figsize=(10,8))
+                sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y_lang, palette='tab10', s=6, legend='full')
+                plt.title('t-SNE of BERT CLS embeddings (all languages)')
+                plt.savefig(out_dir / 'combined_tsne_bert.png', dpi=150)
+                plt.close()
+            except Exception as e:
+                logger.warning(f"t-SNE failed for BERT combined: {e}")
+
+            # UMAP
+            try:
+                um = UMAP(n_components=2, random_state=42)
+                Xu = um.fit_transform(Xp)
+                plt.figure(figsize=(10,8))
+                sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y_lang, palette='tab10', s=6, legend='full')
+                plt.title('UMAP of BERT CLS embeddings (all languages)')
+                plt.savefig(out_dir / 'combined_umap_bert.png', dpi=150)
+                plt.close()
+            except Exception as e:
+                logger.warning(f"UMAP failed for BERT combined: {e}")
+
+    # Collect dual encoder syn embeddings
+    dual_syn = _collect_embeddings(dual_root, '*_dual_syn_embeddings.npy')
+    dual_ant = _collect_embeddings(dual_root, '*_dual_ant_embeddings.npy')
+    if dual_syn:
+        X_parts = []
+        y_lang = []
+        for lang, embs, labels in dual_syn:
+            if embs is None:
+                continue
+            n = embs.shape[0]
+            cap = min(per_lang_cap, n)
+            if n > cap:
+                idx = np.random.RandomState(42).choice(n, cap, replace=False)
+                embs_s = embs[idx]
+            else:
+                embs_s = embs
+            X_parts.append(embs_s)
+            y_lang += [lang] * embs_s.shape[0]
+        if X_parts:
+            X = np.vstack(X_parts)
+            try:
+                pca = PCA(n_components=min(50, X.shape[1]))
+                Xp = pca.fit_transform(X)
+            except Exception:
+                Xp = X
+            try:
+                ts = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+                Xt = ts.fit_transform(Xp)
+                plt.figure(figsize=(10,8))
+                sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y_lang, palette='tab10', s=6, legend='full')
+                plt.title('t-SNE of Dual-Encoder SYN embeddings (all languages)')
+                plt.savefig(out_dir / 'combined_tsne_dual_syn.png', dpi=150)
+                plt.close()
+            except Exception as e:
+                logger.warning(f"t-SNE failed for Dual syn combined: {e}")
+            try:
+                um = UMAP(n_components=2, random_state=42)
+                Xu = um.fit_transform(Xp)
+                plt.figure(figsize=(10,8))
+                sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y_lang, palette='tab10', s=6, legend='full')
+                plt.title('UMAP of Dual-Encoder SYN embeddings (all languages)')
+                plt.savefig(out_dir / 'combined_umap_dual_syn.png', dpi=150)
+                plt.close()
+            except Exception as e:
+                logger.warning(f"UMAP failed for Dual syn combined: {e}")
+
+    # Optionally create a combined plot for dual ant embeddings as well
+    if dual_ant:
+        X_parts = []
+        y_lang = []
+        for lang, embs, labels in dual_ant:
+            if embs is None:
+                continue
+            n = embs.shape[0]
+            cap = min(per_lang_cap, n)
+            if n > cap:
+                idx = np.random.RandomState(42).choice(n, cap, replace=False)
+                embs_s = embs[idx]
+            else:
+                embs_s = embs
+            X_parts.append(embs_s)
+            y_lang += [lang] * embs_s.shape[0]
+        if X_parts:
+            X = np.vstack(X_parts)
+            try:
+                pca = PCA(n_components=min(50, X.shape[1]))
+                Xp = pca.fit_transform(X)
+            except Exception:
+                Xp = X
+            try:
+                ts = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+                Xt = ts.fit_transform(Xp)
+                plt.figure(figsize=(10,8))
+                sns.scatterplot(x=Xt[:,0], y=Xt[:,1], hue=y_lang, palette='tab10', s=6, legend='full')
+                plt.title('t-SNE of Dual-Encoder ANT embeddings (all languages)')
+                plt.savefig(out_dir / 'combined_tsne_dual_ant.png', dpi=150)
+                plt.close()
+            except Exception as e:
+                logger.warning(f"t-SNE failed for Dual ant combined: {e}")
+            try:
+                um = UMAP(n_components=2, random_state=42)
+                Xu = um.fit_transform(Xp)
+                plt.figure(figsize=(10,8))
+                sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y_lang, palette='tab10', s=6, legend='full')
+                plt.title('UMAP of Dual-Encoder ANT embeddings (all languages)')
+                plt.savefig(out_dir / 'combined_umap_dual_ant.png', dpi=150)
+                plt.close()
+            except Exception as e:
+                logger.warning(f"UMAP failed for Dual ant combined: {e}")
+
+
 
 
 if __name__ == '__main__':
