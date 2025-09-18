@@ -130,7 +130,7 @@ log_message "Running analysis script (embeddings + basic plots)"
 log_message "Launching baseline probes (mBERT, XLM-R) in parallel"
 for lang in $(python3 - <<'PY'
 import yaml
-cfg = yaml.safe_load(open('config/language_config.yaml'))
+cfg = yaml.safe_load(open('/home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml'))
 print(' '.join(cfg['languages'].keys()))
 PY
 ); do

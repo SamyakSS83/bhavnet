@@ -52,24 +52,32 @@ class Analyzer:
     def evaluate_bert(self, language, model_path, tokenizer_name):
         logger.info(f"Evaluating BERT for {language}")
         df = self.get_pairs_df(language, split='test')
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        model = AutoModel.from_pretrained(tokenizer_name)
-        model.eval()
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model.to(device)
+        # Try to load tokenizer/model, but tolerate environment import/runtime errors (timm/wandb issues etc.)
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+            model = AutoModel.from_pretrained(tokenizer_name)
+            model.eval()
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            model.to(device)
 
-        inputs = tokenizer(list(df.word1 + ' <sep> ' + df.word2), padding=True, truncation=True, return_tensors='pt')
-        input_ids = inputs['input_ids'].to(device)
-        attn = inputs['attention_mask'].to(device)
-        with torch.no_grad():
-            out = model(input_ids, attention_mask=attn)
-            last_hidden = getattr(out, 'last_hidden_state', out[0])
-            cls = last_hidden[:,0,:].cpu().numpy()
+            inputs = tokenizer(list(df.word1 + ' <sep> ' + df.word2), padding=True, truncation=True, return_tensors='pt')
+            input_ids = inputs['input_ids'].to(device)
+            attn = inputs['attention_mask'].to(device)
+            with torch.no_grad():
+                out = model(input_ids, attention_mask=attn)
+                last_hidden = getattr(out, 'last_hidden_state', out[0])
+                cls = last_hidden[:,0,:].cpu().numpy()
+        except Exception as e:
+            logger.warning(f"BERT model load/encode failed for {language}: {e}")
+            cls = None
 
         # Simple linear probe classifier from saved checkpoint isn't available here; instead we compute embeddings and save them
         save_dir = self.analysis_root / language
         save_dir.mkdir(parents=True, exist_ok=True)
-        np.save(save_dir / 'bert_test_cls_embeddings.npy', cls)
+        if cls is not None:
+            np.save(save_dir / 'bert_test_cls_embeddings.npy', cls)
+        else:
+            logger.info(f"Skipping embedding save for {language} (no CLS embeddings)")
         df.to_csv(save_dir / 'bert_test_pairs.csv', index=False)
         logger.info(f"Saved BERT embeddings and test pairs for {language} to {save_dir}")
         return cls, df
@@ -78,23 +86,31 @@ class Analyzer:
         # Load model - requires the trained dual encoder class; here we only load embeddings by running BERT base
         logger.info(f"Collecting Dual-Encoder embeddings for {language}")
         df = self.get_pairs_df(language, split='test')
-        tokenizer = AutoTokenizer.from_pretrained(bert_model_name)
-        model = AutoModel.from_pretrained(bert_model_name)
-        model.eval()
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model.to(device)
+        cls = None
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(bert_model_name)
+            model = AutoModel.from_pretrained(bert_model_name)
+            model.eval()
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            model.to(device)
 
-        inputs = tokenizer(list(df.word1 + ' <sep> ' + df.word2), padding=True, truncation=True, return_tensors='pt')
-        input_ids = inputs['input_ids'].to(device)
-        attn = inputs['attention_mask'].to(device)
-        with torch.no_grad():
-            out = model(input_ids, attention_mask=attn)
-            last_hidden = getattr(out, 'last_hidden_state', out[0])
-            cls = last_hidden[:,0,:].cpu().numpy()
+            inputs = tokenizer(list(df.word1 + ' <sep> ' + df.word2), padding=True, truncation=True, return_tensors='pt')
+            input_ids = inputs['input_ids'].to(device)
+            attn = inputs['attention_mask'].to(device)
+            with torch.no_grad():
+                out = model(input_ids, attention_mask=attn)
+                last_hidden = getattr(out, 'last_hidden_state', out[0])
+                cls = last_hidden[:,0,:].cpu().numpy()
+        except Exception as e:
+            logger.warning(f"Dual-encoder embedding collection failed for {language}: {e}")
+            cls = None
 
         save_dir = self.analysis_root / language
         save_dir.mkdir(parents=True, exist_ok=True)
-        np.save(save_dir / 'dual_encoder_test_cls_embeddings.npy', cls)
+        if cls is not None:
+            np.save(save_dir / 'dual_encoder_test_cls_embeddings.npy', cls)
+        else:
+            logger.info(f"Skipping dual-encoder embedding save for {language} (no CLS embeddings)")
         df.to_csv(save_dir / 'dual_encoder_test_pairs.csv', index=False)
         logger.info(f"Saved Dual-Encoder embeddings (via BERT) and test pairs for {language} to {save_dir}")
         return cls, df
@@ -113,11 +129,21 @@ class Analyzer:
             return None
 
         # Encode with BERT
-        tokenizer = AutoTokenizer.from_pretrained(bert_model_name)
-        model = AutoModel.from_pretrained(bert_model_name)
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model.to(device)
-        model.eval()
+        # Try to load model/tokenizer; if it fails, skip the probe but still save pair files
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(bert_model_name)
+            model = AutoModel.from_pretrained(bert_model_name)
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            model.to(device)
+            model.eval()
+        except Exception as e:
+            logger.warning(f"Baseline probe model load failed for {language} ({bert_model_name}): {e}")
+            # Save pair files for analysis and return
+            save_dir = self.analysis_root / language
+            save_dir.mkdir(parents=True, exist_ok=True)
+            train_df.to_csv(save_dir / 'baseline_train_pairs.csv', index=False)
+            test_df.to_csv(save_dir / 'baseline_test_pairs.csv', index=False)
+            return None
 
         def encode(df):
             inputs = tokenizer(list(df.word1 + ' <sep> ' + df.word2), padding=True, truncation=True, return_tensors='pt')
