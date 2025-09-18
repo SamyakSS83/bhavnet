@@ -125,8 +125,33 @@ def aggregate(languages=None):
         dual_trained_dir = TRAINED_DUAL_ANALYSIS / lang
         if bert_trained_dir.exists():
             row['trained_bert_metrics'] = read_metric_from_trained(bert_trained_dir, 'bert')
+            # also check for prediction CSVs under trained analysis
+            try:
+                predf = bert_trained_dir / f"{lang}_bert_predictions.csv"
+                if predf.exists():
+                    row['bert_pred_csv'] = str(predf.resolve())
+                    try:
+                        dfp = pd.read_csv(predf)
+                        if 'label' in dfp.columns and 'pred' in dfp.columns:
+                            row['bert_acc'] = float((dfp['label'] == dfp['pred']).mean())
+                    except Exception:
+                        logger.warning(f'Could not read bert predictions CSV for {lang} at {predf}')
+            except Exception:
+                pass
         if dual_trained_dir.exists():
             row['trained_dual_metrics'] = read_metric_from_trained(dual_trained_dir, 'dual')
+            try:
+                predf2 = dual_trained_dir / f"{lang}_dual_predictions.csv"
+                if predf2.exists():
+                    row['dual_pred_csv'] = str(predf2.resolve())
+                    try:
+                        dfp2 = pd.read_csv(predf2)
+                        if 'label' in dfp2.columns and 'pred' in dfp2.columns:
+                            row['dual_acc'] = float((dfp2['label'] == dfp2['pred']).mean())
+                    except Exception:
+                        logger.warning(f'Could not read dual predictions CSV for {lang} at {predf2}')
+            except Exception:
+                pass
 
         rows.append(row)
 
