@@ -1,0 +1,31 @@
+# Language configuration for analysis and training
+# languages: mapping of short code -> model identifiers and optional trained paths
+languages:
+  english:
+    bert_model: bert-base-uncased
+  german:
+    bert_model: dbmdz/bert-base-german-cased
+  french:
+    bert_model: camembert-base
+  spanish:
+    bert_model: dccuchile/bert-base-spanish-wwm-cased
+  italian:
+    bert_model: dbmdz/bert-base-italian-cased
+  portuguese:
+    bert_model: neuralmind/bert-base-portuguese-cased
+  dutch:
+    bert_model: GroNLP/bert-base-dutch-cased
+  russian:
+    bert_model: DeepPavlov/rubert-base-cased
+
+# Optional defaults for training scripts
+training:
+  epochs: 4
+  batch_size: 16
+  lr: 2e-5
+
+# Paths (relative to project root)
+paths:
+  data_root: /home/samyak/scratch/temp/multilingual_antonym_detection/datasets
+  models_root: /home/samyak/scratch/temp/multilingual_antonym_detection/models/bert
+  analysis_root: /home/samyak/scratch/temp/multilingual_antonym_detection/assets/analysis
