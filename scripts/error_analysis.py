@@ -299,6 +299,40 @@ def aggregate_all(summaries, out_root: Path):
         fname = Path(str(fname).replace(' ', '_').replace('/', '_'))
         plt.savefig(fname, dpi=150)
         plt.close()
+        # Also create a bar chart per bin showing bert vs dual accuracy
+        try:
+            agg = sub.groupby('bin').agg({'bert_acc':'mean','dual_acc':'mean','n':'sum'}).reset_index()
+            if not agg.empty:
+                plt.figure(figsize=(8,4))
+                x = np.arange(len(agg))
+                width = 0.35
+                plt.bar(x - width/2, agg['bert_acc'], width, label='BERT')
+                plt.bar(x + width/2, agg['dual_acc'], width, label='Dual')
+                plt.xticks(x, agg['bin'], rotation=45)
+                plt.ylim(0,1)
+                plt.ylabel('Accuracy')
+                plt.title(f'Accuracy by bin — basis: {basis}')
+                plt.legend()
+                plt.tight_layout()
+                bname = out_root / f'accuracy_by_bin_{basis}.png'
+                bname = Path(str(bname).replace(' ', '_').replace('/', '_'))
+                plt.savefig(bname, dpi=150)
+                plt.close()
+
+                # Delta plot (dual - bert)
+                plt.figure(figsize=(8,3))
+                plt.bar(x, (agg['dual_acc'] - agg['bert_acc']), color='C2')
+                plt.xticks(x, agg['bin'], rotation=45)
+                plt.axhline(0, color='gray', linestyle='--')
+                plt.ylabel('Dual - BERT acc')
+                plt.title(f'Accuracy delta by bin — basis: {basis}')
+                plt.tight_layout()
+                dname = out_root / f'accuracy_delta_by_bin_{basis}.png'
+                dname = Path(str(dname).replace(' ', '_').replace('/', '_'))
+                plt.savefig(dname, dpi=150)
+                plt.close()
+        except Exception as e:
+            print(f'Failed to create bar/delta plots for basis {basis}: {e}')
 
     return all_df
 
