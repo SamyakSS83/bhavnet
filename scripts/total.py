@@ -22,7 +22,10 @@ import json
 from sklearn.manifold import TSNE
 from sklearn.metrics import f1_score
 from sklearn.decomposition import PCA
-from umap import UMAP
+try:
+    from umap import UMAP
+except Exception:
+    UMAP = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('total')
@@ -412,6 +415,110 @@ def plot_combined_embeddings(project_root: Path, out_dir: Path, max_points=5000,
                 plt.close()
             except Exception as e:
                 logger.warning(f"UMAP failed for Dual ant combined: {e}")
+
+
+def collect_per_language_plots(languages=None):
+    """Search analysis folders for existing TSNE/UMAP plot PNGs and return a mapping.
+
+    Returns dict: lang -> {plot_key: Path}
+    plot_key examples: 'bert_tsne', 'bert_umap', 'dual_syn_tsne', 'dual_syn_umap', 'dual_ant_tsne', 'dual_ant_umap'
+    """
+    out = {}
+    # candidate roots to search
+    candidate_roots = [ASSETS_ANALYSIS, TRAINED_BERT_ANALYSIS, TRAINED_DUAL_ANALYSIS]
+    # languages list
+    langs = languages or sorted({p.name for p in ASSETS_ANALYSIS.iterdir() if p.is_dir()})
+    for lang in langs:
+        found = {}
+        patterns = {
+            'bert_tsne': ['*bert_tsne*.png', '*bert_cls_tsne*.png'],
+            'bert_umap': ['*bert_umap*.png', '*bert_cls_umap*.png'],
+            'dual_syn_tsne': ['*dual_syn_tsne*.png', '*dual_syn_tsne*.png', '*dual_syn_tsne.png'],
+            'dual_syn_umap': ['*dual_syn_umap*.png'],
+            'dual_ant_tsne': ['*dual_ant_tsne*.png'],
+            'dual_ant_umap': ['*dual_ant_umap*.png']
+        }
+        for root in candidate_roots:
+            # check lang-specific dirs and their 'plots' subdirs
+            candidates = [root / lang, root / lang / 'plots', root / lang / 'analysis' / 'plots']
+            for c in candidates:
+                if not c.exists():
+                    continue
+                for key, globs in patterns.items():
+                    if key in found:
+                        continue
+                    for g in globs:
+                        for f in c.glob(g):
+                            found[key] = f
+                            break
+                        if key in found:
+                            break
+        out[lang] = found
+    return out
+
+
+def plot_individual_and_grid(plot_map: dict, out_dir: Path):
+    """Given per-language plot paths, save individual copies and a grid image comparing languages.
+
+    plot_map: dict(lang -> dict(plot_key -> Path))
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    import matplotlib.image as mpimg
+
+    # Determine columns (plot types) order
+    plot_keys = ['bert_tsne', 'bert_umap', 'dual_syn_tsne', 'dual_syn_umap', 'dual_ant_tsne', 'dual_ant_umap']
+
+    langs = list(plot_map.keys())
+    n_rows = len(langs)
+    n_cols = len(plot_keys)
+
+    # Save individual images (copy) and prepare grid
+    for lang, pm in plot_map.items():
+        lang_dir = out_dir / 'individual' / lang
+        lang_dir.mkdir(parents=True, exist_ok=True)
+        for key in plot_keys:
+            p = pm.get(key)
+            if p and p.exists():
+                # copy to individual folder
+                dst = lang_dir / f"{lang}_{key}.png"
+                try:
+                    img = mpimg.imread(p)
+                    plt.imsave(dst, img)
+                except Exception:
+                    try:
+                        # fallback to file copy
+                        from shutil import copyfile
+                        copyfile(str(p), str(dst))
+                    except Exception:
+                        pass
+
+    # Create grid figure
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 3*n_rows))
+    if n_rows == 1:
+        axes = np.expand_dims(axes, 0)
+    for i, lang in enumerate(langs):
+        pm = plot_map[lang]
+        for j, key in enumerate(plot_keys):
+            ax = axes[i, j]
+            p = pm.get(key)
+            ax.axis('off')
+            if p and p.exists():
+                try:
+                    img = mpimg.imread(p)
+                    ax.imshow(img)
+                    ax.set_title(f"{lang} - {key}", fontsize=8)
+                    ax.axis('off')
+                except Exception:
+                    ax.text(0.5, 0.5, 'failed to load', ha='center')
+            else:
+                ax.text(0.5, 0.5, 'missing', ha='center')
+
+    plt.tight_layout()
+    grid_path = out_dir / 'per_language_grid.png'
+    fig.savefig(grid_path, dpi=150)
+    plt.close(fig)
+    logger.info(f"Saved per-language grid of TSNE/UMAP plots to {grid_path}")
+
 
 
 
