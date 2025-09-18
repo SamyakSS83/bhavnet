@@ -215,14 +215,29 @@ def aggregate(languages=None, write_csv: bool = True):
         bert_vals = df.get('bert_f1', df.get('bert_acc', pd.Series([np.nan]*len(df)))).fillna(0)
         dual_vals = df.get('dual_f1', df.get('dual_acc', pd.Series([np.nan]*len(df)))).fillna(0)
         base_vals = df.get('baseline_f1', df.get('baseline_acc', pd.Series([np.nan]*len(df)))).fillna(0)
-        plt.bar(idx - width, bert_vals, width, label='BERT (F1)')
-        plt.bar(idx, dual_vals, width, label='Dual (F1)')
-        plt.bar(idx + width, base_vals, width, label='Baseline (F1)')
+        b1 = plt.bar(idx - width, bert_vals, width, label='BERT (F1)')
+        b2 = plt.bar(idx, dual_vals, width, label='Dual (F1)')
+        b3 = plt.bar(idx + width, base_vals, width, label='Baseline (F1)')
         plt.xticks(idx, df['language'], rotation=45)
         plt.ylabel('Macro-F1')
         plt.title('Model comparison across languages (macro-F1 preferred)')
         plt.legend()
         plt.tight_layout()
+        # add numeric labels above each bar (format to 2 decimal places)
+        def _label_bars(bars):
+            for bar in bars:
+                try:
+                    h = bar.get_height()
+                    if np.isnan(h):
+                        continue
+                    plt.text(bar.get_x() + bar.get_width()/2., h + 0.01, f"{h:.2f}", ha='center', va='bottom', fontsize=8)
+                except Exception:
+                    continue
+
+        _label_bars(b1)
+        _label_bars(b2)
+        _label_bars(b3)
+
         plt.savefig(OUT_PNG)
         logger.info(f"Wrote aggregate plot to {OUT_PNG}")
     except Exception as e:
@@ -241,14 +256,29 @@ def make_comparison_plot(df: pd.DataFrame, out_png: Path):
         bert_vals = df.get('bert_f1', df.get('bert_acc', pd.Series([np.nan]*len(df)))).fillna(0)
         dual_vals = df.get('dual_f1', df.get('dual_acc', pd.Series([np.nan]*len(df)))).fillna(0)
         base_vals = df.get('baseline_f1', df.get('baseline_acc', pd.Series([np.nan]*len(df)))).fillna(0)
-        plt.bar(idx - width, bert_vals, width, label='BERT (F1)')
-        plt.bar(idx, dual_vals, width, label='Dual (F1)')
-        plt.bar(idx + width, base_vals, width, label='Baseline (F1)')
+        b1 = plt.bar(idx - width, bert_vals, width, label='BERT (F1)')
+        b2 = plt.bar(idx, dual_vals, width, label='Dual (F1)')
+        b3 = plt.bar(idx + width, base_vals, width, label='Baseline (F1)')
         plt.xticks(idx, df['language'], rotation=45)
         plt.ylabel('Macro-F1')
         plt.title('Model comparison across languages (macro-F1 preferred)')
         plt.legend()
         plt.tight_layout()
+        # annotate bars with numeric labels
+        def _label_bars_local(bars):
+            for bar in bars:
+                try:
+                    h = bar.get_height()
+                    if np.isnan(h):
+                        continue
+                    plt.text(bar.get_x() + bar.get_width()/2., h + 0.01, f"{h:.2f}", ha='center', va='bottom', fontsize=8)
+                except Exception:
+                    continue
+
+        _label_bars_local(b1)
+        _label_bars_local(b2)
+        _label_bars_local(b3)
+
         plt.savefig(out_png)
         logger.info(f"Wrote aggregate plot to {out_png}")
     except Exception as e:
