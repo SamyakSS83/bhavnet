@@ -170,30 +170,25 @@ class MultilingualDualEncoderTrainer:
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
 
-        # Decide whether to load fine-tuned BERT: for non-English, load if trained_bert_path present by default
-        if self.language.lower() in ('english', 'en'):
-            ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
-            self.bert_model = self._extract_base_model(ft_model).to(self.device)
-        else:
-            # For non-English, prefer fine-tuned if available unless explicitly disabled
-            trained_path = self.lang_config.get('trained_bert_path', None)
-            if trained_path and Path(trained_path).exists() and self.use_trained_bert:
-                try:
-                    trained_bert_path = Path(trained_path)
-                    logger.info(f"Loading fine-tuned BERT from {trained_bert_path}")
-                    ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
-                    ft_model.load_state_dict(torch.load(trained_bert_path, map_location=self.device))
-                    self.bert_model = self._extract_base_model(ft_model).to(self.device)
-                    logger.info("✓ Successfully loaded fine-tuned BERT model")
-                except Exception as e:
-                    logger.warning(f"Failed to load fine-tuned BERT from {trained_bert_path}: {e}")
-                    logger.info("Falling back to pre-trained BERT")
-                    ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
-                    self.bert_model = self._extract_base_model(ft_model).to(self.device)
-            else:
-                logger.info("Using pre-trained BERT (not fine-tuned)")
+        # Decide whether to load fine-tuned BERT: prefer trained_bert_path when present and allowed
+        trained_path = self.lang_config.get('trained_bert_path', None)
+        if trained_path and Path(trained_path).exists() and self.use_trained_bert:
+            try:
+                trained_bert_path = Path(trained_path)
+                logger.info(f"Loading fine-tuned BERT from {trained_bert_path}")
+                ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
+                ft_model.load_state_dict(torch.load(trained_bert_path, map_location=self.device))
+                self.bert_model = self._extract_base_model(ft_model).to(self.device)
+                logger.info("✓ Successfully loaded fine-tuned BERT model")
+            except Exception as e:
+                logger.warning(f"Failed to load fine-tuned BERT from {trained_bert_path}: {e}")
+                logger.info("Falling back to pre-trained BERT")
                 ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
                 self.bert_model = self._extract_base_model(ft_model).to(self.device)
+        else:
+            logger.info("Using pre-trained BERT (not fine-tuned)")
+            ft_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, num_labels=2)
+            self.bert_model = self._extract_base_model(ft_model).to(self.device)
 
         self.bert_model.eval()
         
@@ -693,6 +688,9 @@ def main():
     parser.add_argument('--output_dir', type=str,
                       default='assets',
                       help='Directory to save model outputs')
+    parser.add_argument('--use-trained-bert', dest='use_trained_bert', action='store_true', help='Allow loading a fine-tuned trained BERT if configured')
+    parser.add_argument('--no-trained-bert', dest='use_trained_bert', action='store_false', help='Do not load fine-tuned BERT even if available')
+    parser.set_defaults(use_trained_bert=True)
     
     args = parser.parse_args()
     
@@ -706,7 +704,7 @@ def main():
         return
     
     # Initialize trainer
-    trainer = MultilingualDualEncoderTrainer(config, args.language, args.output_dir)
+    trainer = MultilingualDualEncoderTrainer(config, args.language, args.output_dir, use_trained_bert=args.use_trained_bert)
     
     # Load data
     train_data, test_data = trainer.load_data(args.data_dir)
