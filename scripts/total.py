@@ -49,6 +49,24 @@ logger.info(f'TRAINED_BERT_ANALYSIS={TRAINED_BERT_ANALYSIS}')
 logger.info(f'TRAINED_DUAL_ANALYSIS={TRAINED_DUAL_ANALYSIS}')
 
 
+def _pseudo_labels_for_visualization(X):
+    """Create 2-cluster pseudo-labels (KMeans on a small PCA projection) for visualization.
+
+    Returns None on failure.
+    """
+    try:
+        try:
+            p_small = PCA(n_components=min(10, X.shape[1]))
+            Xs = p_small.fit_transform(X)
+        except Exception:
+            Xs = X
+        km = KMeans(n_clusters=2, random_state=42, n_init=10)
+        labs = km.fit_predict(Xs)
+        return labs
+    except Exception:
+        return None
+
+
 def read_metric_from_trained(lang_dir: Path, prefix: str):
     """Try to read an accuracy or metric file under the trained analysis dir for a language.
     Common files: <lang>_confusion_matrix.txt, tables/history.csv, plots/ ...
@@ -835,6 +853,13 @@ def plot_selected_grids(plot_map: dict, out_dir: Path, languages: list):
                                 X2 = None
 
                     if X2 is not None:
+                        # if no labels are present for a dual grid, create pseudo-labels so the plot shows two colors
+                        if labs is None and 'bert' not in grid_name:
+                            try:
+                                # labs correspond to X (pre-projection); compute on X
+                                labs = _pseudo_labels_for_visualization(X)
+                            except Exception:
+                                labs = None
                         coords[lang] = (X2, labs)
                         has_any = True
                 except Exception as e:
