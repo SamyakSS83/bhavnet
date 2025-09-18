@@ -279,15 +279,26 @@ def aggregate_all(summaries, out_root: Path):
     print(f'Wrote aggregate summary to {outp}')
 
     # high-level plot: bert vs dual acc for each (language,basis,bin)
-    plt.figure(figsize=(8,6))
-    sns.scatterplot(data=all_df, x='bert_acc', y='dual_acc', hue='basis')
-    plt.plot([0,1],[0,1], linestyle='--', color='gray')
-    plt.xlabel('BERT acc')
-    plt.ylabel('Dual acc')
-    plt.title('BERT vs Dual accuracy across bases')
-    plt.tight_layout()
-    plt.savefig(out_root / 'bert_vs_dual_by_bin.png', dpi=150)
-    plt.close()
+    # Create independent scatter plots per basis (don't overlay)
+    bases = sorted(all_df['basis'].dropna().unique())
+    for basis in bases:
+        sub = all_df[all_df['basis'] == basis]
+        if sub.empty:
+            continue
+        plt.figure(figsize=(6,6))
+        sns.scatterplot(data=sub, x='bert_acc', y='dual_acc')
+        plt.plot([0,1],[0,1], linestyle='--', color='gray')
+        plt.xlabel('BERT acc')
+        plt.ylabel('Dual acc')
+        plt.title(f'BERT vs Dual accuracy — basis: {basis}')
+        plt.xlim(0,1)
+        plt.ylim(0,1)
+        plt.tight_layout()
+        fname = out_root / f'bert_vs_dual_by_bin_{basis}.png'
+        # sanitize filename
+        fname = Path(str(fname).replace(' ', '_').replace('/', '_'))
+        plt.savefig(fname, dpi=150)
+        plt.close()
 
     return all_df
 
