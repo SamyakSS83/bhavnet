@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from torch_geometric.data import Data as GraphData
 from torch_geometric.data import DataLoader as GeoDataLoader
 from torch_geometric.nn import TransformerConv, global_mean_pool
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 from tqdm import tqdm
 # Set matplotlib backend before importing pyplot to avoid segfaults
 import matplotlib
@@ -163,6 +163,9 @@ class MultilingualDualEncoderTrainer:
         # Load pre-trained BERT model
         self.model_name = self.lang_config['bert_model']
         logger.info(f"Loading BERT model: {self.model_name}")
+        # Explicit handling/log for English datasets if required
+        if self.language.lower() == 'english' or self.language.lower() == 'en':
+            logger.info("English language selected — ensure dataset paths are under 'dataset/' or 'datasets/english'.")
         
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         
@@ -196,80 +199,94 @@ class MultilingualDualEncoderTrainer:
             dropout=self.training_config['dropout']
         ).to(self.device)
         
-    def _extract_base_model(self, model):
-        """Extract the base transformer model from different architectures."""
-        # Try different attribute names for different model types
-        if hasattr(model, 'bert'):
-            return model.bert  # Standard BERT models
-        elif hasattr(model, 'roberta'):
-            return model.roberta  # RoBERTa-based models (CamemBERT, etc.)
-        elif hasattr(model, 'distilbert'):
-            return model.distilbert  # DistilBERT models
-        elif hasattr(model, 'electra'):
-            return model.electra  # ELECTRA models
-        elif hasattr(model, 'albert'):
-            return model.albert  # ALBERT models
-        else:
-            # Fallback: look for any transformer-like attribute
-            for attr_name in dir(model):
-                attr = getattr(model, attr_name)
-                if hasattr(attr, 'embeddings') and hasattr(attr, 'encoder'):
-                    logger.info(f"Found base model using attribute: {attr_name}")
-                    return attr
-            
-            raise AttributeError(f"Could not find base transformer model in {type(model)}. "
-                               f"Available attributes: {[attr for attr in dir(model) if not attr.startswith('_')]}")
-        
-    def load_data(self, data_dir):
-        """Load training and test data."""
-        data_path = Path(data_dir) / self.language
-        
-        # Load data files
-        train_file = data_path / 'train.txt'
-        val_file = data_path / 'val.txt'
-        test_file = data_path / 'test.txt'
-        
-        train_data = self._load_file(train_file) if train_file.exists() else pd.DataFrame()
-        val_data = self._load_file(val_file) if val_file.exists() else pd.DataFrame()
-        test_data = self._load_file(test_file) if test_file.exists() else pd.DataFrame()
-        
-        # Combine train and val for dual encoder training
-        if not val_data.empty:
-            train_data = pd.concat([train_data, val_data], ignore_index=True)
-        
-        logger.info(f"Loaded data for {self.language}:")
-        logger.info(f"  Combined Train: {len(train_data)} samples")
-        logger.info(f"  Test: {len(test_data)} samples")
-        
-        if len(train_data) == 0:
-            raise ValueError(f"No training data found for {self.language}")
-        
-        return train_data, test_data
-    
-    def _load_file(self, file_path):
-        """Load a single data file."""
-        data = []
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                parts = line.strip().split('\t')
-                if len(parts) >= 3:
-                    data.append({
-                        'word1': parts[0],
-                        'word2': parts[1],
-                        'label': int(parts[2])
-                    })
-        return pd.DataFrame(data)
-    
-    def create_dataloaders(self, train_data, test_data):
-        """Create graph dataloaders."""
-        batch_size = self.training_config['batch_size']
-        
-        train_dataset = WordPairGraphDataset(
-            train_data, self.bert_model, self.tokenizer, self.device
+    def test(self, test_loader, model_path):
+        """Test the model and generate detailed results.
+
+        Produces per-sample prediction CSV and returns metrics including accuracy and macro-F1.
+        """
+        # Load best model weights
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.eval()
+
+        all_preds = []
+        all_labels = []
+        per_sample_rows = []
+
+        logger.info("Evaluating dual encoder on test set...")
+        with torch.no_grad():
+            for batch in tqdm(test_loader):
+                batch = batch.to(self.device)
+                logits = self.model(batch)
+                preds = torch.argmax(logits, dim=1).cpu().numpy()
+                labels = batch.y.cpu().numpy()
+
+                all_preds.extend(preds.tolist())
+                all_labels.extend(labels.tolist())
+
+                # Recover word1/word2 from batched graphs when possible
+                try:
+                    if hasattr(batch, 'to_data_list'):
+                        data_list = batch.to_data_list()
+                        for d_idx, d in enumerate(data_list):
+                            w1 = getattr(d, 'word1', None)
+                            w2 = getattr(d, 'word2', None)
+                            lbl = int(d.y.cpu().numpy()) if hasattr(d, 'y') else None
+                            pred = int(preds[d_idx]) if d_idx < len(preds) else None
+                            per_sample_rows.append({'word1': w1, 'word2': w2, 'label': lbl, 'pred': pred, 'score': None})
+                    else:
+                        for i in range(len(preds)):
+                            per_sample_rows.append({'word1': None, 'word2': None, 'label': int(labels[i]), 'pred': int(preds[i]), 'score': None})
+                except Exception:
+                    for i in range(len(preds)):
+                        per_sample_rows.append({'word1': None, 'word2': None, 'label': int(labels[i]), 'pred': int(preds[i]), 'score': None})
+
+        # Calculate metrics
+        accuracy = accuracy_score(all_labels, all_preds) if len(all_labels) > 0 else 0.0
+        try:
+            f1 = float(f1_score(all_labels, all_preds, average='macro')) if len(all_labels) > 0 else 0.0
+        except Exception:
+            f1 = 0.0
+
+        report = classification_report(
+            all_labels,
+            all_preds,
+            target_names=['Not Antonym', 'Antonym'],
+            zero_division=0
         )
-        test_dataset = WordPairGraphDataset(
-            test_data, self.bert_model, self.tokenizer, self.device
-        )
+
+        logger.info(f"Dual Encoder Test Accuracy for {self.language}: {accuracy:.4f}")
+        logger.info(f"Dual Encoder Test Macro-F1 for {self.language}: {f1:.4f}")
+        logger.info(f"Classification Report:\n{report}")
+
+        # Save confusion matrix as text to avoid plotting issues
+        try:
+            cm = confusion_matrix(all_labels, all_preds)
+            cm_file = self.output_dir / f'{self.language}_dual_encoder_confusion_matrix.txt'
+            with open(cm_file, 'w') as f:
+                f.write(f"Dual Encoder Confusion Matrix for {self.language}:\n")
+                f.write(f"{cm}\n")
+                f.write(f"Classes: ['Not Antonym', 'Antonym']\n")
+            logger.info(f"Saved confusion matrix data to {cm_file}")
+        except Exception as e:
+            logger.warning(f"Failed to compute/save confusion matrix: {e}")
+
+        # Save per-sample predictions for analysis
+        try:
+            save_dir = self.analysis_dir / self.language
+            save_dir.mkdir(parents=True, exist_ok=True)
+            preds_df = pd.DataFrame(per_sample_rows)
+            preds_csv = save_dir / f'{self.language}_dual_predictions.csv'
+            preds_df.to_csv(preds_csv, index=False)
+            logger.info(f"Saved per-sample Dual Encoder predictions to {preds_csv}")
+        except Exception as e:
+            logger.warning(f"Failed to save per-sample Dual Encoder predictions: {e}")
+
+        return {
+            'language': self.language,
+            'accuracy': accuracy,
+            'f1_macro': f1,
+            'classification_report': report
+        }
         
         train_loader = GeoDataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         test_loader = GeoDataLoader(test_dataset, batch_size=batch_size)
@@ -524,6 +541,18 @@ class MultilingualDualEncoderTrainer:
                 plt.savefig(self.plots_dir / f'{self.language}_dual_syn_tsne.png')
                 plt.close()
                 logger.info(f"Saved t-SNE plots to {self.plots_dir}")
+                # UMAP for dual syn
+                try:
+                    from umap import UMAP
+                    um = UMAP(n_components=2, random_state=42)
+                    syn_u = um.fit_transform(syn_np[idx])
+                    plt.figure(figsize=(8,4))
+                    plt.scatter(syn_u[:,0], syn_u[:,1], c=np.asarray(labels)[idx], cmap='coolwarm', s=5)
+                    plt.title(f'{self.language} - Dual Syn UMAP')
+                    plt.savefig(self.plots_dir / f'{self.language}_dual_syn_umap.png')
+                    plt.close()
+                except Exception as e:
+                    logger.warning(f"Failed to compute Dual syn UMAP: {e}")
             except Exception as e:
                 logger.warning(f"Failed to compute t-SNE: {e}")
 
@@ -557,13 +586,14 @@ class MultilingualDualEncoderTrainer:
     
     def test(self, test_loader, model_path):
         """Test the model and generate detailed results."""
-        # Load best model
-        self.model.load_state_dict(torch.load(model_path))
-        self.model.eval()
-        
-        all_preds = []
-        all_labels = []
-        per_sample_rows = []
+        from umap import UMAP
+        um = UMAP(n_components=2, random_state=42)
+        Xu = um.fit_transform(Xp)
+        plt.figure(figsize=(10,8))
+        sns.scatterplot(x=Xu[:,0], y=Xu[:,1], hue=y_lang, palette='tab10', s=6, legend='full')
+        plt.title('UMAP of Dual-Encoder ANT embeddings (all languages)')
+        plt.savefig(out_dir / 'combined_umap_dual_ant.png', dpi=150)
+        plt.close()
         
         logger.info("Evaluating dual encoder on test set...")
         with torch.no_grad():

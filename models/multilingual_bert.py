@@ -108,15 +108,39 @@ class MultilingualBertTrainer:
     def load_data(self, data_dir):
         """Load training, validation, and test data."""
         data_path = Path(data_dir) / self.language
-        
-        # Load data files
+
+        # Load data files (normal layout: datasets/<lang>/{train,val,test}.txt)
         train_file = data_path / 'train.txt'
         val_file = data_path / 'val.txt'
         test_file = data_path / 'test.txt'
-        
+
         train_data = self._load_file(train_file) if train_file.exists() else pd.DataFrame()
         val_data = self._load_file(val_file) if val_file.exists() else pd.DataFrame()
         test_data = self._load_file(test_file) if test_file.exists() else pd.DataFrame()
+
+        # Legacy fallback for English: repo has dataset/*.train / *.test files
+        if self.language.lower() in ('english', 'en') and train_data.empty:
+            legacy = Path('dataset')
+            if legacy.exists():
+                logger.info('Falling back to legacy dataset/ files for English')
+                def try_read(suffix):
+                    p = legacy / f'adjective-pairs.{suffix}'
+                    if p.exists():
+                        return self._load_file(p)
+                    p = legacy / f'noun-pairs.{suffix}'
+                    if p.exists():
+                        return self._load_file(p)
+                    p = legacy / f'verb-pairs.{suffix}'
+                    if p.exists():
+                        return self._load_file(p)
+                    # try combined
+                    p = legacy / f'adjective-pairs.{suffix}'
+                    return pd.DataFrame()
+
+                # Combine train/val from legacy if present
+                train_data = try_read('train')
+                val_data = try_read('val')
+                test_data = try_read('test')
         
         logger.info(f"Loaded data for {self.language}:")
         logger.info(f"  Train: {len(train_data)} samples")
@@ -333,6 +357,19 @@ class MultilingualBertTrainer:
                 plt.savefig(self.plots_dir / f'{self.language}_bert_tsne.png')
                 plt.close()
                 logger.info(f"Saved BERT t-SNE to {self.plots_dir}")
+                # Save UMAP projection as well
+                try:
+                    from umap import UMAP
+                    um = UMAP(n_components=2, random_state=42)
+                    emb_u = um.fit_transform(embs[idx])
+                    plt.figure(figsize=(8,4))
+                    plt.scatter(emb_u[:,0], emb_u[:,1], c=np.asarray(labels)[idx], cmap='coolwarm', s=5)
+                    plt.title(f'{self.language} - BERT CLS UMAP')
+                    plt.savefig(self.plots_dir / f'{self.language}_bert_umap.png')
+                    plt.close()
+                    logger.info(f"Saved BERT UMAP to {self.plots_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to compute BERT UMAP: {e}")
             except Exception as e:
                 logger.warning(f"Failed to compute BERT t-SNE: {e}")
 

@@ -20,6 +20,7 @@ import argparse
 import logging
 import json
 from sklearn.manifold import TSNE
+from sklearn.metrics import f1_score
 from sklearn.decomposition import PCA
 from umap import UMAP
 
@@ -95,7 +96,12 @@ def aggregate(languages=None):
             try:
                 df = pd.read_csv(bert_pred)
                 if 'label' in df.columns and 'pred' in df.columns:
-                    row['bert_acc'] = float((df['label'] == df['pred']).mean())
+                    # compute macro F1 as the canonical metric
+                    try:
+                        row['bert_f1'] = float(f1_score(df['label'], df['pred'], average='macro'))
+                    except Exception:
+                        # fallback to accuracy if F1 can't be computed
+                        row['bert_f1'] = float((df['label'] == df['pred']).mean())
             except Exception:
                 pass
         if dual_pred.exists():
@@ -103,18 +109,26 @@ def aggregate(languages=None):
             try:
                 df2 = pd.read_csv(dual_pred)
                 if 'label' in df2.columns and 'pred' in df2.columns:
-                    row['dual_acc'] = float((df2['label'] == df2['pred']).mean())
+                    try:
+                        row['dual_f1'] = float(f1_score(df2['label'], df2['pred'], average='macro'))
+                    except Exception:
+                        row['dual_f1'] = float((df2['label'] == df2['pred']).mean())
             except Exception:
                 pass
         if baseline_report.exists():
             row['baseline_report'] = str(baseline_report.resolve())
-            # try to read accuracy from file
+            # try to read F1 or accuracy from file
             try:
                 txt = baseline_report.read_text(encoding='utf-8')
                 for line in txt.splitlines():
-                    if 'Accuracy:' in line:
+                    if 'F1:' in line:
                         try:
-                            row['baseline_acc'] = float(line.split('Accuracy:')[-1].strip())
+                            row['baseline_f1'] = float(line.split('F1:')[-1].strip())
+                        except Exception:
+                            pass
+                    if 'Accuracy:' in line and 'baseline_f1' not in row:
+                        try:
+                            row['baseline_f1'] = float(line.split('Accuracy:')[-1].strip())
                         except Exception:
                             pass
             except Exception:
@@ -133,7 +147,10 @@ def aggregate(languages=None):
                     try:
                         dfp = pd.read_csv(predf)
                         if 'label' in dfp.columns and 'pred' in dfp.columns:
-                            row['bert_acc'] = float((dfp['label'] == dfp['pred']).mean())
+                            try:
+                                row['bert_f1'] = float(f1_score(dfp['label'], dfp['pred'], average='macro'))
+                            except Exception:
+                                row['bert_f1'] = float((dfp['label'] == dfp['pred']).mean())
                     except Exception:
                         logger.warning(f'Could not read bert predictions CSV for {lang} at {predf}')
             except Exception:
@@ -147,7 +164,10 @@ def aggregate(languages=None):
                     try:
                         dfp2 = pd.read_csv(predf2)
                         if 'label' in dfp2.columns and 'pred' in dfp2.columns:
-                            row['dual_acc'] = float((dfp2['label'] == dfp2['pred']).mean())
+                            try:
+                                row['dual_f1'] = float(f1_score(dfp2['label'], dfp2['pred'], average='macro'))
+                            except Exception:
+                                row['dual_f1'] = float((dfp2['label'] == dfp2['pred']).mean())
                     except Exception:
                         logger.warning(f'Could not read dual predictions CSV for {lang} at {predf2}')
             except Exception:
@@ -165,15 +185,16 @@ def aggregate(languages=None):
         plt.figure(figsize=(10,6))
         idx = np.arange(len(df))
         width = 0.25
-        bert_vals = df.get('bert_acc', pd.Series([np.nan]*len(df))).fillna(0)
-        dual_vals = df.get('dual_acc', pd.Series([np.nan]*len(df))).fillna(0)
-        base_vals = df.get('baseline_acc', pd.Series([np.nan]*len(df))).fillna(0)
-        plt.bar(idx - width, bert_vals, width, label='BERT')
-        plt.bar(idx, dual_vals, width, label='Dual')
-        plt.bar(idx + width, base_vals, width, label='Baseline')
+        # prefer F1 if present, fallback to accuracy-like columns
+        bert_vals = df.get('bert_f1', df.get('bert_acc', pd.Series([np.nan]*len(df)))).fillna(0)
+        dual_vals = df.get('dual_f1', df.get('dual_acc', pd.Series([np.nan]*len(df)))).fillna(0)
+        base_vals = df.get('baseline_f1', df.get('baseline_acc', pd.Series([np.nan]*len(df)))).fillna(0)
+        plt.bar(idx - width, bert_vals, width, label='BERT (F1)')
+        plt.bar(idx, dual_vals, width, label='Dual (F1)')
+        plt.bar(idx + width, base_vals, width, label='Baseline (F1)')
         plt.xticks(idx, df['language'], rotation=45)
-        plt.ylabel('Accuracy')
-        plt.title('Model comparison across languages')
+        plt.ylabel('Macro-F1')
+        plt.title('Model comparison across languages (macro-F1 preferred)')
         plt.legend()
         plt.tight_layout()
         plt.savefig(OUT_PNG)
@@ -182,6 +203,30 @@ def aggregate(languages=None):
         logger.warning(f"Failed to create comparison plot: {e}")
 
     return df
+
+
+def make_comparison_plot(df: pd.DataFrame, out_png: Path):
+    """Create and save the comparison bar chart (Macro-F1 preferred)."""
+    try:
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        plt.figure(figsize=(10,6))
+        idx = np.arange(len(df))
+        width = 0.25
+        bert_vals = df.get('bert_f1', df.get('bert_acc', pd.Series([np.nan]*len(df)))).fillna(0)
+        dual_vals = df.get('dual_f1', df.get('dual_acc', pd.Series([np.nan]*len(df)))).fillna(0)
+        base_vals = df.get('baseline_f1', df.get('baseline_acc', pd.Series([np.nan]*len(df)))).fillna(0)
+        plt.bar(idx - width, bert_vals, width, label='BERT (F1)')
+        plt.bar(idx, dual_vals, width, label='Dual (F1)')
+        plt.bar(idx + width, base_vals, width, label='Baseline (F1)')
+        plt.xticks(idx, df['language'], rotation=45)
+        plt.ylabel('Macro-F1')
+        plt.title('Model comparison across languages (macro-F1 preferred)')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(out_png)
+        logger.info(f"Wrote aggregate plot to {out_png}")
+    except Exception as e:
+        logger.warning(f"Failed to create comparison plot: {e}")
 
 
 def _collect_embeddings(root: Path, pattern: str):
@@ -374,6 +419,14 @@ def plot_combined_embeddings(project_root: Path, out_dir: Path, max_points=5000,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--languages', nargs='+', help='Optional list of languages to aggregate')
+    parser.add_argument('--recompile', action='store_true', help='Recompute combined embeddings (t-SNE/UMAP) and recompile final plots')
     args = parser.parse_args()
     df = aggregate(args.languages)
     print(df)
+    if args.recompile:
+        # recompute combined embeddings for all languages and regenerate combined plots
+        out_dir = ASSETS_ANALYSIS / 'combined_embeddings'
+        logger.info('Recomputing combined embeddings (t-SNE/UMAP) for all languages...')
+        plot_combined_embeddings(PROJECT_ROOT, out_dir, max_points=5000, per_lang_cap=1000)
+        # recompile the comparison plot using the possibly-updated df
+        make_comparison_plot(df, OUT_PNG)
