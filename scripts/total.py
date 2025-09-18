@@ -76,7 +76,7 @@ def read_metric_from_trained(lang_dir: Path, prefix: str):
     return res
 
 
-def aggregate(languages=None):
+def aggregate(languages=None, write_csv: bool = True):
     rows = []
     languages = languages or sorted([p.name for p in ASSETS_ANALYSIS.iterdir() if p.is_dir()])
     for lang in languages:
@@ -179,9 +179,10 @@ def aggregate(languages=None):
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(OUT_CSV, index=False)
-    logger.info(f"Wrote aggregate CSV to {OUT_CSV}")
+    if write_csv:
+        OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(OUT_CSV, index=False)
+        logger.info(f"Wrote aggregate CSV to {OUT_CSV}")
 
     # Create a simple bar chart comparing bert_acc, dual_acc, baseline_acc if present
     try:
@@ -531,15 +532,31 @@ if __name__ == '__main__':
     parser.add_argument('--no-grid', dest='grid', action='store_false', help='Do not build per-language grid of plots')
     parser.set_defaults(grid=True)
     args = parser.parse_args()
-    df = aggregate(args.languages)
-    print(df)
+
+    # If recompile is requested, do the heavy embedding recompute but DO NOT overwrite final_summary.csv
     if args.recompile:
-        # recompute combined embeddings for all languages and regenerate combined plots
         out_dir = ASSETS_ANALYSIS / 'combined_embeddings'
         logger.info('Recomputing combined embeddings (t-SNE/UMAP) for all languages...')
         plot_combined_embeddings(PROJECT_ROOT, out_dir, max_points=5000, per_lang_cap=1000)
-        # recompile the comparison plot using the possibly-updated df
+
+        # Load existing final_summary.csv if present to avoid overwriting it; otherwise aggregate in-memory without writing
+        if OUT_CSV.exists():
+            try:
+                df = pd.read_csv(OUT_CSV)
+                logger.info(f"Loaded existing final summary from {OUT_CSV} (no overwrite)")
+            except Exception:
+                df = aggregate(args.languages, write_csv=False)
+        else:
+            df = aggregate(args.languages, write_csv=False)
+
+        # Recreate the comparison plot from the loaded/aggregated dataframe
         make_comparison_plot(df, OUT_PNG)
+    else:
+        # Normal behavior: aggregate and write final_summary.csv
+        df = aggregate(args.languages, write_csv=True)
+
+    print(df)
+
     # By default, build a per-language grid of available TSNE/UMAP plots
     if args.grid:
         out_dir = ASSETS_ANALYSIS / 'combined_embeddings'
