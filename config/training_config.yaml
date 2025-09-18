@@ -10,6 +10,7 @@ datasets:
     - portuguese
     - dutch
     - russian
+    - english
 
 models:
   bert_dir: "/home/samyak/scratch/temp/multilingual_antonym_detection/models/bert"

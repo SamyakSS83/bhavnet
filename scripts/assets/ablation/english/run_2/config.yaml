@@ -1,0 +1,27 @@
+languages:
+  dutch:
+    bert_model: GroNLP/bert-base-dutch-cased
+  english:
+    bert_model: bert-base-uncased
+  french:
+    bert_model: camembert-base
+  german:
+    bert_model: dbmdz/bert-base-german-cased
+  italian:
+    bert_model: dbmdz/bert-base-italian-cased
+  portuguese:
+    bert_model: neuralmind/bert-base-portuguese-cased
+  russian:
+    bert_model: DeepPavlov/rubert-base-cased
+  spanish:
+    bert_model: dccuchile/bert-base-spanish-wwm-cased
+paths:
+  analysis_root: /home/samyak/scratch/temp/multilingual_antonym_detection/assets/analysis
+  data_root: /home/samyak/scratch/temp/multilingual_antonym_detection/datasets
+  models_root: /home/samyak/scratch/temp/multilingual_antonym_detection/models/bert
+training:
+  batch_size: 16
+  epochs: 4
+  hidden_dim: 64
+  lr: 2e-5
+  margin_weight: 0.5

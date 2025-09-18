@@ -1,0 +1,9 @@
+Accuracy: 0.6489524782830863
+              precision    recall  f1-score   support
+
+ Not Antonym       0.63      0.71      0.67      1957
+     Antonym       0.67      0.59      0.63      1957
+
+    accuracy                           0.65      3914
+   macro avg       0.65      0.65      0.65      3914
+weighted avg       0.65      0.65      0.65      3914

@@ -171,7 +171,7 @@ class MultilingualDualEncoderTrainer:
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
 
         # Decide whether to load fine-tuned BERT: prefer trained_bert_path when present and allowed
-        trained_path = self.lang_config.get('trained_bert_path', None)
+        trained_path = self.lang_config.get('trained_bert_path', "/home/samyak/scratch/temp/multilingual_antonym_detection/models/trained/bert/best_english_bert_model.pt")
         if trained_path and Path(trained_path).exists() and self.use_trained_bert:
             try:
                 trained_bert_path = Path(trained_path)
@@ -396,7 +396,7 @@ class MultilingualDualEncoderTrainer:
         learning_rate = self.training_config.get('learning_rate', self.training_config.get('lr', 1e-4))
         margin_weight = self.training_config.get('margin_weight', 0.5)
         
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=float(learning_rate))
         criterion = nn.CrossEntropyLoss()
 
         best_acc = 0.0

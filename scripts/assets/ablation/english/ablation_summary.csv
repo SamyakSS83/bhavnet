@@ -1,0 +1,5 @@
+run,hidden_dim,margin_weight,final_acc
+1,64,0.1,
+2,64,0.5,
+3,128,0.1,
+4,128,0.5,

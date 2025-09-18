@@ -186,7 +186,7 @@ class MultilingualBertTrainer:
         learning_rate = self.training_config['learning_rate']
         
         # Setup optimizer and scheduler
-        optimizer = AdamW(self.model.parameters(), lr=learning_rate)
+        optimizer = AdamW(self.model.parameters(), lr=float(learning_rate))
         total_steps = len(train_loader) * num_epochs
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
