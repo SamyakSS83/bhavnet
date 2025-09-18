@@ -124,7 +124,7 @@ log_message "========================================================="
 # Run analysis: embeddings, plots, and baseline probes
 ANALYSIS_CMD=("python3" "analysis.py")
 log_message "Running analysis script (embeddings + basic plots)"
-"${ANALYSIS_CMD[@]}" --config ../config/language_config.yaml 2>&1 | tee -a "$MASTER_LOG"
+"${ANALYSIS_CMD[@]}" --config /home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml 2>&1 | tee -a "$MASTER_LOG"
 
 # Run baseline probes (mBERT and XLM-R) in parallel for all languages
 log_message "Launching baseline probes (mBERT, XLM-R) in parallel"
@@ -135,8 +135,8 @@ print(' '.join(cfg['languages'].keys()))
 PY
 ); do
     (
-        python3 analysis.py --config ../config/language_config.yaml --languages $lang --baseline mbert 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/analysis_${lang}_mbert.log &
-        python3 analysis.py --config ../config/language_config.yaml --languages $lang --baseline xlmr 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/analysis_${lang}_xlmr.log &
+        python3 analysis.py --config /home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml --languages $lang --baseline mbert 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/analysis_${lang}_mbert.log &
+        python3 analysis.py --config /home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml --languages $lang --baseline xlmr 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/analysis_${lang}_xlmr.log &
     )
 done
 wait
@@ -144,12 +144,12 @@ wait
 # Run ablation (small example grid) for first language to demonstrate
 FIRST_LANG=$(python3 - <<'PY'
 import yaml
-cfg = yaml.safe_load(open('config/language_config.yaml'))
+cfg = yaml.safe_load(open('/home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml'))
 print(list(cfg['languages'].keys())[0])
 PY
 )
 log_message "Launching ablation runs for $FIRST_LANG"
-python3 analysis.py --config ../config/language_config.yaml --ablation --languages $FIRST_LANG 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/ablation_${FIRST_LANG}.log
+python3 analysis.py --config /home/samyak/scratch/temp/multilingual_antonym_detection/config/language_config.yaml --ablation --languages $FIRST_LANG 2>&1 | tee -a /home/samyak/scratch/temp/multilingual_antonym_detection/logs/ablation_${FIRST_LANG}.log
 
 log_message ""
 log_message "========================================================="

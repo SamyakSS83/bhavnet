@@ -1,7 +1,7 @@
 # Multilingual Antonym Detection Training Configuration
 
 datasets:
-  base_dir: "../datasets"
+  base_dir: "/home/samyak/scratch/temp/multilingual_antonym_detection/datasets"
   languages:
     - german
     - french
@@ -12,8 +12,8 @@ datasets:
     - russian
 
 models:
-  bert_dir: "../models/bert"
-  output_dir: "../models/trained"
+  bert_dir: "/home/samyak/scratch/temp/multilingual_antonym_detection/models/bert"
+  output_dir: "/home/samyak/scratch/temp/multilingual_antonym_detection/models/trained"
   model_types:
     - bert
     - dual_encoder
