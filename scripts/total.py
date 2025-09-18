@@ -26,13 +26,19 @@ from umap import UMAP
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('total')
 
-# Default absolute roots (adjust if your project root differs)
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ASSETS_ANALYSIS = PROJECT_ROOT / 'assets' / 'analysis'
-TRAINED_BERT_ANALYSIS = PROJECT_ROOT / 'models' / 'trained' / 'bert' / 'analysis'
-TRAINED_DUAL_ANALYSIS = PROJECT_ROOT / 'models' / 'trained' / 'dual_encoder' / 'analysis'
+# Hard-coded absolute roots (explicitly set to user's runtime paths)
+PROJECT_ROOT = Path('/home/scratch/samyak/temp/multilingual_antonym_detection')
+ASSETS_ANALYSIS = Path('/home/scratch/samyak/temp/multilingual_antonym_detection/assets/analysis')
+TRAINED_BERT_ANALYSIS = Path('/home/scratch/samyak/temp/multilingual_antonym_detection/models/trained/bert/analysis')
+TRAINED_DUAL_ANALYSIS = Path('/home/scratch/samyak/temp/multilingual_antonym_detection/models/trained/dual_encoder/analysis')
 OUT_CSV = ASSETS_ANALYSIS / 'final_summary.csv'
 OUT_PNG = ASSETS_ANALYSIS / 'final_summary.png'
+
+# Log paths for diagnostics
+logger.info(f'Using PROJECT_ROOT={PROJECT_ROOT}')
+logger.info(f'ASSETS_ANALYSIS={ASSETS_ANALYSIS}')
+logger.info(f'TRAINED_BERT_ANALYSIS={TRAINED_BERT_ANALYSIS}')
+logger.info(f'TRAINED_DUAL_ANALYSIS={TRAINED_DUAL_ANALYSIS}')
 
 
 def read_metric_from_trained(lang_dir: Path, prefix: str):
