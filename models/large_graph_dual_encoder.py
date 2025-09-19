@@ -115,7 +115,7 @@ def _edge_tensor(edge_list: List[Tuple[int, int]], device) -> torch.Tensor:
     return ei
 
 
-def train_language(npz_path: Path, data_dir: Path, out_dir: Path, hidden=256, layers=2, heads=2, dropout=0.2, lr=1e-3, epochs=10, language="lang"):
+def train_language(npz_path: Path, data_dir: Path, out_dir: Path, hidden=256, layers=2, heads=2, dropout=0.2, lr=2e-4, epochs=10, weight_decay=1e-5, patience=3, language="lang"):
     X, words, w2i = load_word_features(npz_path)
     train_edges, train_labels = read_pairs(data_dir / 'train.txt', w2i)
     val_edges, val_labels = read_pairs(data_dir / 'val.txt', w2i)
@@ -128,8 +128,16 @@ def train_language(npz_path: Path, data_dir: Path, out_dir: Path, hidden=256, la
     data = data.to(device)
 
     model = LargeGraphDualEncoder(in_dim=X.shape[1], hidden=hidden, gnn_heads=heads, gnn_layers=layers, dropout=dropout).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=float(lr))
-    crit = nn.BCEWithLogitsLoss()
+    opt = torch.optim.AdamW(model.parameters(), lr=float(lr), weight_decay=float(weight_decay))
+
+    # compute positive class weight to mitigate imbalance
+    pos = sum(train_labels) if len(train_labels) else 0
+    neg = len(train_labels) - pos if len(train_labels) else 0
+    if pos == 0 or neg == 0:
+        crit = nn.BCEWithLogitsLoss()
+    else:
+        pos_weight = torch.tensor([neg / pos], dtype=torch.float, device=device)
+        crit = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     tr_e = _edge_tensor(train_edges, device)
     tr_y = torch.tensor(train_labels, dtype=torch.float, device=device)
@@ -141,6 +149,10 @@ def train_language(npz_path: Path, data_dir: Path, out_dir: Path, hidden=256, la
     out_dir.mkdir(parents=True, exist_ok=True)
     best_f1 = -1.0
     best_path = out_dir / f"best_{language}_largegraph_dual.pt"
+    epochs_no_improve = 0
+
+    # simple LR scheduler to reduce LR on plateau of val f1
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode='max', factor=0.5, patience=1, min_lr=1e-7)
 
     for ep in range(1, epochs + 1):
         model.train()
@@ -161,9 +173,20 @@ def train_language(npz_path: Path, data_dir: Path, out_dir: Path, hidden=256, la
             else:
                 f1 = 0.0
         logger.info(f"[{language}] Epoch {ep}: loss={loss.item():.4f} val_f1={f1:.4f}")
-        if f1 > best_f1:
+        # scheduler step based on validation f1
+        scheduler.step(f1)
+
+        if f1 > best_f1 + 1e-6:
             best_f1 = f1
             torch.save(model.state_dict(), best_path)
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+
+        # early stopping
+        if epochs_no_improve >= patience:
+            logger.info(f"Early stopping: no improvement for {patience} epochs (best_f1={best_f1:.4f})")
+            break
 
     # Final test
     model.load_state_dict(torch.load(best_path, map_location=device))
